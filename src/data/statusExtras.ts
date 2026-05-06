@@ -23,6 +23,7 @@ import type {
 import type { MitigationCategory } from '@/types/mitigation'
 import type { PartyState } from '@/types/partyState'
 import type { TimelineStatData } from '@/types/statData'
+import type { HealSnapshot } from '@/types/healSnapshot'
 import { addStatus, removeStatus, updateStatus, updateStatusData } from '@/executors/statusHelpers'
 import { isStatusValidForTank } from '@/utils/statusFilter'
 import { regenStatusExecutor } from '@/executors/regenStatusExecutor'
@@ -74,6 +75,42 @@ export function createSurvivalBarrierHook() {
       ),
     }
   }
+}
+
+/**
+ * status 钩子内触发一次性直接治疗的 helper。
+ *
+ * 等价于 createHealExecutor，但作用域是 status 钩子（onAfterDamage / onConsume / onExpire 等）：
+ *   - baseAmount 取 statistics.healByAbility[healActionId]
+ *   - castEventId / sourcePlayerId 从 ctx.status 读（创建该 status 的 cast 在 data.castEventId 里）
+ *   - 触发时刻取 ctx.partyState.timestamp——simulate 在每种钩子触发前都把 timestamp 推进到
+ *     当前时刻（onTick → tickTime、onExpire → expireTime、Phase 2-5 钩子 → event.time），
+ *     不需要调用方再显式传时间
+ *   - 调用 applyDirectHeal 走 buff 倍率 + recordHeal 链路
+ *
+ * 不处理 stack / 冷却 / 移除——这些由调用方钩子自己负责（与本 helper 解耦）。
+ */
+function triggerStatusHeal(
+  ctx: {
+    status: MitigationStatus
+    partyState: PartyState
+    statistics?: TimelineStatData
+    recordHeal?: (snap: HealSnapshot) => void
+  },
+  opts: { healActionId: number }
+): PartyState {
+  const baseAmount = ctx.statistics?.healByAbility?.[opts.healActionId] ?? 0
+  return applyDirectHeal(
+    ctx.partyState,
+    baseAmount,
+    {
+      castEventId: (ctx.status.data?.castEventId as string | undefined) ?? '',
+      actionId: opts.healActionId,
+      sourcePlayerId: ctx.status.sourcePlayerId ?? 0,
+      time: ctx.partyState.timestamp,
+    },
+    ctx.recordHeal
+  )
 }
 
 /**
@@ -255,19 +292,7 @@ export const STATUS_EXTRAS: Record<number, StatusExtras> = {
         const lastTriggerTime = current.data?.lastTriggerTime as number | undefined
         if (lastTriggerTime !== undefined && ctx.event.time - lastTriggerTime <= 1) return
 
-        const BELL_HEAL_ID = 25863
-        const baseAmount = ctx.statistics?.healByAbility?.[BELL_HEAL_ID] ?? 0
-        const stateAfterHeal = applyDirectHeal(
-          ctx.partyState,
-          baseAmount,
-          {
-            castEventId: (current.data?.castEventId as string | undefined) ?? '',
-            actionId: BELL_HEAL_ID,
-            sourcePlayerId: current.sourcePlayerId ?? 0,
-            time: ctx.event.time,
-          },
-          ctx.recordHeal
-        )
+        const stateAfterHeal = triggerStatusHeal(ctx, { healActionId: 25863 })
 
         const newStack = (current.stack ?? 1) - 1
         if (newStack <= 0) {
@@ -356,18 +381,24 @@ export const STATUS_EXTRAS: Record<number, StatusExtras> = {
     category: ['self', 'heal'],
     isFriendly: true,
     executor: {
-      onExpire: () => {
-        // TODO: 大地星爆炸治疗逻辑
+      onExpire: ctx => {
+        return triggerStatusHeal(ctx, { healActionId: 7441 })
       },
     },
+  },
+  956: {
+    name: '命运之轮',
+    category: ['partywide', 'heal'],
+    isFriendly: true,
+    executor: regenStatusExecutor,
   },
   1890: {
     name: '天宫图',
     category: ['partywide', 'heal'],
     isFriendly: true,
     executor: {
-      onExpire: () => {
-        // TODO: 天宫图治疗逻辑
+      onExpire: ctx => {
+        return triggerStatusHeal(ctx, { healActionId: 1001890 })
       },
     },
   },
@@ -376,10 +407,28 @@ export const STATUS_EXTRAS: Record<number, StatusExtras> = {
     category: ['partywide', 'heal'],
     isFriendly: true,
     executor: {
-      onExpire: () => {
-        // TODO: 阳星天宫图治疗逻辑
+      onExpire: ctx => {
+        return triggerStatusHeal(ctx, { healActionId: 1001891 })
       },
     },
+  },
+  1892: {
+    name: '中间学派',
+    category: ['partywide', 'percentage'],
+    isFriendly: true,
+    selfHeal: 1.2,
+  },
+  3894: {
+    name: '阳星合相',
+    category: ['partywide', 'heal'],
+    isFriendly: true,
+    executor: regenStatusExecutor,
+  },
+  1879: {
+    name: '天星冲日',
+    category: ['partywide', 'heal'],
+    isFriendly: true,
+    executor: regenStatusExecutor,
   },
   2718: {
     name: '大宇宙',
@@ -397,9 +446,43 @@ export const STATUS_EXTRAS: Record<number, StatusExtras> = {
           nonTankDamageTotal: prev + ctx.finalDamage,
         })
       },
-      onExpire: () => {
-        // TODO: 大宇宙治疗逻辑（按 ctx.status.data.nonTankDamageTotal 推导）
+      onExpire: ctx => {
+        const accDamage = (ctx.status.data?.nonTankDamageTotal as number | undefined) ?? 0
+        const healOfEarth = ctx.statistics?.healByAbility?.[7441] ?? 0
+        const baseHeal = Math.round(healOfEarth * (200 / 720))
+        const baseAmount = baseHeal + Math.round(accDamage * 0.5)
+        return applyDirectHeal(
+          ctx.partyState,
+          baseAmount,
+          {
+            castEventId: (ctx.status.data?.castEventId as string | undefined) ?? '',
+            actionId: 25874,
+            sourcePlayerId: ctx.status.sourcePlayerId ?? 0,
+            time: ctx.expireTime,
+          },
+          ctx.recordHeal
+        )
       },
     },
+  },
+  2938: {
+    name: '坚角清汁[回]',
+    category: ['partywide', 'heal'],
+    isFriendly: true,
+    executor: regenStatusExecutor,
+  },
+  2620: {
+    name: '自生II',
+    category: ['partywide', 'percentage'],
+    isFriendly: true,
+    heal: 1.1,
+    executor: regenStatusExecutor,
+  },
+  3899: {
+    name: '幸福',
+    category: ['partywide', 'heal'],
+    isFriendly: true,
+    executor: regenStatusExecutor,
+    selfHeal: 1.2,
   },
 }

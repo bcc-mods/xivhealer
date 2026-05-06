@@ -225,7 +225,11 @@ describe('mitigationActions', () => {
       const action = MITIGATION_DATA.actions.find(a => a.id === 37030)!
       const stateWithNeutralSect: PartyState = {
         players: [{ id: 1, job: 'AST', maxHP: 100000 }],
-        statuses: [{ instanceId: 'neutral-1', statusId: 1892, startTime: 0, endTime: 30 }],
+        // sourcePlayerId 必填：中间学派 selfHeal=1.2 通过 computeFinalHeal 作用于
+        // createShieldExecutor 出口的盾量，需要 status.sourcePlayerId === castSourcePlayerId
+        statuses: [
+          { instanceId: 'neutral-1', statusId: 1892, startTime: 0, endTime: 30, sourcePlayerId: 1 },
+        ],
         timestamp: 5,
       }
       const ctx: ActionExecutionContext = {
@@ -260,7 +264,8 @@ describe('mitigationActions', () => {
 
       const newState = action.executor(ctx)
 
-      expect(newState.statuses).toHaveLength(0)
+      // 无中间学派：HoT 3894 仍会被挂上，但不应该有盾 1921
+      expect(newState.statuses.find(s => s.statusId === 1921)).toBeUndefined()
     })
 
     it('均衡预后II应添加盾值并互斥鼓舞盾', () => {

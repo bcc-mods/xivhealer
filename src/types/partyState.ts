@@ -45,6 +45,11 @@ export interface SegmentState {
    * max(finalDamage) 在盾够大时恒为 0，无法反映"段内最坏一次对盾的消耗"。
    */
   segCandidateMax: number
+  /**
+   * 段内已观察到的最大 event.damage（原始空间），仅供 UI 展示（PropertyPanel 的
+   * "部分 AOE 伤害详情"）。simulator 自身扣血 / 扣盾不消费这个值。
+   */
+  segOriginalMax: number
 }
 
 /**
@@ -64,7 +69,7 @@ export interface PartyState {
   hp?: HpPool
   /**
    * partial 段累积状态。simulate 主循环初始化为
-   * `{ inSegment: false, segMax: 0, segCandidateMax: 0 }`。
+   * `{ inSegment: false, segMax: 0, segCandidateMax: 0, segOriginalMax: 0 }`。
    * 单事件 calculate 入口（PropertyPanel）可不传，runSingleBranch 兜底为段外语义。
    */
   segment?: SegmentState

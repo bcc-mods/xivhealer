@@ -321,7 +321,68 @@ describe('createPlacementEngine — findInvalidCastEvents 拖拽预览语义', (
     expect(engine.findInvalidCastEvents('cgrace')).toEqual([])
   })
 
-  it('常规 excludeId 查询（getValidIntervals / canPlaceCastEvent）不触发 simulateOnRemove', () => {
+  it('excludeId 过滤 placement timeline：自禁 placement 不会把自己判非法（AST 地星 / 自动重分类回归）', () => {
+    // 回归：AST 地星（7439） placement = `not(whileStatus(1224))`，executor 又会
+    // attach 1224。在 EditorPage 的"自动重分类" useEffect 里调
+    // `canPlaceCastEvent(7439, t=castTs, excludeId=ce.id)` 时，旧实现把该 cast 自身的
+    // 1224 也算进 placement timeline → 在 cast 自身 buff 起点恒为非法 → pickUniqueMember
+    // 切到同 trackGroup 的 8324（星体爆轰），下一帧再翻回 7439，触发 7439↔8324 死循环。
+    // 修复：excludeId 过滤 statusTimelineByPlayer，仅保留 sourceCastEventId !== excludeId。
+    const SELF_BUFF = 1224
+    const timeline: StatusTimelineByPlayer = new Map([
+      [
+        10,
+        new Map([
+          [
+            SELF_BUFF,
+            [
+              // 仅一条由 ce='self' 自身贡献的 buff 起点正好等于 excludeId 的 cast 时刻
+              {
+                from: 60,
+                to: 70,
+                stacks: 1,
+                sourcePlayerId: 10,
+                sourceCastEventId: 'self',
+              } as StatusInterval,
+            ],
+          ],
+        ]),
+      ],
+    ])
+    const earthStar = makeAction({
+      id: 7439,
+      cooldown: 60,
+      placement: not(whileStatus(SELF_BUFF)),
+    })
+    const detonation = makeAction({
+      id: 8324,
+      cooldown: 0,
+      trackGroup: 7439,
+      placement: whileStatus(SELF_BUFF),
+    })
+    const engine = createPlacementEngine({
+      castEvents: [
+        { id: 'self', actionId: 7439, playerId: 10, timestamp: 60 } as unknown as CastEvent,
+      ],
+      actions: new Map([
+        [7439, earthStar],
+        [8324, detonation],
+      ]),
+      statusTimelineByPlayer: timeline,
+    })
+    // canPlaceCastEvent(7439, t=60, 'self')：过滤掉 sourceCastEventId='self' 的 1224，
+    // placement timeline 没有任何 1224 → not(whileStatus) 全段合法 → t=60 应该 ok。
+    expect(engine.canPlaceCastEvent(earthStar, 10, 60, 'self').ok).toBe(true)
+    // pickUniqueMember 应当回到 7439（而不是 8324），自动重分类才不会反复翻 actionId。
+    expect(engine.pickUniqueMember(7439, 10, 60, 'self')?.id).toBe(7439)
+  })
+
+  it('excludeId 查询走 simulateOnRemove 派生 placement timeline，且按 excludeId 缓存', () => {
+    // 常规 excludeId 查询（getValidIntervals / canPlaceCastEvent / pickUniqueMember /
+    // computeTrackShadow）现在都靠 simulateOnRemove 重跑 placement timeline，等价于
+    // "假装该 cast 不存在"——简单 sourceCastEventId 过滤无法还原被消费型 cast（如 AST
+    // 星体爆轰）截断的下游 buff 自然时长，shadow 会少给出可拖区。缓存按 excludeId 分桶，
+    // 同 excludeId 的多次查询命中 cache 不重跑 simulate。
     let calls = 0
     const action = makeAction({ id: 1 })
     const engine = createPlacementEngine({
@@ -333,12 +394,20 @@ describe('createPlacementEngine — findInvalidCastEvents 拖拽预览语义', (
         return { statusTimelineByPlayer: new Map() }
       },
     })
-    engine.getValidIntervals(action, 10, 'c1')
-    engine.canPlaceCastEvent(action, 10, 0, 'c1')
+    // 不带 excludeId：直接共享 defaultTimeline，0 次 simulate
+    engine.getValidIntervals(action, 10)
+    engine.canPlaceCastEvent(action, 10, 0)
     engine.findInvalidCastEvents()
-    // 全程 0 次 simulate——只有 findInvalidCastEvents(removeId) 会触发
     expect(calls).toBe(0)
-    engine.findInvalidCastEvents('c1')
+    // 带 excludeId='c1'：触发一次 simulateOnRemove，后续同 excludeId 复用缓存
+    engine.getValidIntervals(action, 10, 'c1')
     expect(calls).toBe(1)
+    engine.canPlaceCastEvent(action, 10, 0, 'c1')
+    engine.computeTrackShadow(1, 10, 'c1')
+    expect(calls).toBe(1)
+    // findInvalidCastEvents(removeId) 走自己的重跑路径（不共享 timelineExcluding 缓存），
+    // 重跑一次。
+    engine.findInvalidCastEvents('c1')
+    expect(calls).toBe(2)
   })
 })

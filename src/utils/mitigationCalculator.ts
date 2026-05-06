@@ -49,6 +49,22 @@ export interface HpSimulationSnapshot {
   hpMax: number
   /** 段内 max（partial 事件填充；非 partial 事件不填） */
   segMax?: number
+  /**
+   * 段进入本事件前的最大 event.damage（原始空间，partial 事件填充；**不含本事件**）。
+   * 段刚开（本事件是首个 partial）时为 0。
+   * 仅供 UI 展示（PropertyPanel 的"部分 AOE 伤害详情"），不参与扣血 / 扣盾；
+   * partyState.segment.segOriginalMax 仍维护含本事件的最大值给下一事件用。
+   */
+  segOriginalMax?: number
+  /**
+   * 段内盾前增量（partial 事件填充）= max(0, candidateDamage - 段进入本事件前的 segCandidateMax)。
+   * 与 hpSnap.dealt（盾后增量 = hpBefore - hpAfter + overkill）成对：
+   *   pctMit_settlement   = raw_settlement - preShieldDealt
+   *   shield_settlement   = preShieldDealt - preClampDealt
+   *   finalDamage_settlement = preClampDealt
+   * 让 PropertyPanel 减伤构成与 HP 条扣血量保持一致。
+   */
+  preShieldDealt?: number
   /** 溢出伤害 = max(0, 应扣量 - hpBefore)（应扣量：partial = delta、aoe = finalDamage） */
   overkill?: number
 }
@@ -329,20 +345,28 @@ export class MitigationCalculator {
       inSegment: false,
       segMax: 0,
       segCandidateMax: 0,
+      segOriginalMax: 0,
     }
 
     let nextSegment = prevSegment
+    let snapshotSegOriginalMax: number | undefined
     if (ev.type === 'aoe') {
-      nextSegment = { inSegment: false, segMax: 0, segCandidateMax: 0 }
+      nextSegment = { inSegment: false, segMax: 0, segCandidateMax: 0, segOriginalMax: 0 }
     } else if (ev.type === 'partial_aoe' || ev.type === 'partial_final_aoe') {
       const baseSeg = prevSegment.inSegment
         ? prevSegment
-        : { inSegment: true, segMax: 0, segCandidateMax: 0 }
+        : { inSegment: true, segMax: 0, segCandidateMax: 0, segOriginalMax: 0 }
+      // snapshot 暴露给 UI 的"最高区间伤害"= 段进入本事件前的最大 event.damage（不含自身），
+      // 否则本事件就是段最大时会退化成"最高 = 原始 = 自身、结算 = 0"，不携带信息。
+      // nextSegment.segOriginalMax 仍维护含自身的最大值，给下一事件用。
+      snapshotSegOriginalMax = baseSeg.segOriginalMax
       nextSegment = {
         inSegment: ev.type === 'partial_final_aoe' ? false : true,
         segMax: ev.type === 'partial_final_aoe' ? 0 : Math.max(baseSeg.segMax, finalDamage),
         segCandidateMax:
           ev.type === 'partial_final_aoe' ? 0 : Math.max(baseSeg.segCandidateMax, candidateDamage),
+        segOriginalMax:
+          ev.type === 'partial_final_aoe' ? 0 : Math.max(baseSeg.segOriginalMax, ev.damage),
       }
     }
 
@@ -355,18 +379,20 @@ export class MitigationCalculator {
     let nextCurrent = hp.current
     let dealt = 0
     let snapshotSegMax: number | undefined
+    let snapshotPreShieldDealt: number | undefined
 
     if (ev.type === 'aoe') {
       dealt = finalDamage
       nextCurrent -= finalDamage
     } else if (ev.type === 'partial_aoe' || ev.type === 'partial_final_aoe') {
-      // 用"段进入本事件前的 segMax"算增量；结算事件 nextSegment.segMax 已被清零，
-      // 不能用它做增量参照。
+      // 用"段进入本事件前的 segMax / segCandidateMax"算增量；结算事件 nextSegment 已清零。
       const segMaxBefore = prevSegment.inSegment ? prevSegment.segMax : 0
+      const segCandidateMaxBefore = prevSegment.inSegment ? prevSegment.segCandidateMax : 0
       const newSegMax = Math.max(segMaxBefore, finalDamage)
       dealt = Math.max(0, finalDamage - segMaxBefore)
       nextCurrent -= dealt
       snapshotSegMax = newSegMax
+      snapshotPreShieldDealt = Math.max(0, candidateDamage - segCandidateMaxBefore)
     }
 
     const overkill = Math.max(0, dealt - before)
@@ -383,6 +409,8 @@ export class MitigationCalculator {
         hpAfter: nextCurrent,
         hpMax: hp.max,
         segMax: snapshotSegMax,
+        segOriginalMax: snapshotSegOriginalMax,
+        preShieldDealt: snapshotPreShieldDealt,
         overkill: overkill > 0 ? overkill : undefined,
       },
     }
@@ -682,7 +710,7 @@ export class MitigationCalculator {
       statuses: [...initialState.statuses],
       timestamp: initialState.timestamp,
       hp: initialHpPool,
-      segment: { inSegment: false, segMax: 0, segCandidateMax: 0 },
+      segment: { inSegment: false, segMax: 0, segCandidateMax: 0, segOriginalMax: 0 },
     }
     // 初始 state 已挂的 maxHP buff 立即同步 hp.max / hp.current
     currentState = recomputeAndTrack(currentState, currentState.timestamp)

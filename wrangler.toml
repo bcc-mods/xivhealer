@@ -21,16 +21,6 @@ binding = "healerbook_timelines"
 database_name = "healerbook_timelines"
 database_id = "d5c7c316-c36a-42c7-a00e-aa43ceaba3c8"
 
-[[queues.producers]]
-queue = "top100-sync-queue"
-binding = "TOP100_SYNC_QUEUE"
-
-[[queues.consumers]]
-queue = "top100-sync-queue"
-max_batch_size = 1
-max_batch_timeout = 30
-max_retries = 3
-
 # 开发环境
 [env.development]
 [env.development.vars]
@@ -62,16 +52,6 @@ ALLOWED_ORIGIN = "https://xivhealer.com"
 [[env.production.kv_namespaces]]
 binding = "healerbook"
 id = "4d48c91437374775b166165a05d56839"
-
-[[env.production.queues.producers]]
-queue = "top100-sync-queue"
-binding = "TOP100_SYNC_QUEUE"
-
-[[env.production.queues.consumers]]
-queue = "top100-sync-queue"
-max_batch_size = 1
-max_batch_timeout = 30
-max_retries = 3
 
 [[env.production.d1_databases]]
 binding = "healerbook_timelines"

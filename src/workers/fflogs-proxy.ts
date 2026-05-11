@@ -13,7 +13,7 @@
 
 import { FFLogsClientV2, type GetReportParams, type GetEventsParams } from './fflogsClientV2'
 import {
-  syncEncounter,
+  syncAllTop100,
   getTop100KVKey,
   getStatisticsKVKey,
   handleGetEncounterTemplate,
@@ -28,11 +28,6 @@ import { handleAuthCallback, handleAuthRefresh } from './auth'
 import { handleTimelines } from './timelines'
 import { handleFFLogsImport } from './fflogsImportHandler'
 
-interface QueueMessageBody {
-  type: 'sync-encounter'
-  encounterId: number
-}
-
 export interface Env {
   // FFLogs v2 OAuth Client ID
   FFLOGS_CLIENT_ID?: string
@@ -42,10 +37,8 @@ export interface Env {
   SYNC_AUTH_TOKEN?: string
   // KV 命名空间（对应 wrangler.toml 中 binding = "healerbook"）
   healerbook: KVNamespace
-  // D1 数据库（共享时间轴存储）
+  // D1 数据库（共享时间轴存储 + samples_queue）
   healerbook_timelines: D1Database
-  // Queue 绑定
-  TOP100_SYNC_QUEUE: Queue
   // FFLogs OAuth 回调地址（Authorization Code Flow）
   FFLOGS_OAUTH_REDIRECT_URI?: string
   // JWT 签名密钥
@@ -131,20 +124,25 @@ export async function handleFetch(request: Request, env: Env): Promise<Response>
 
 /**
  * Cron 定时任务：根据 event.cron 分发
- * 触发频率见 wrangler.toml [triggers.crons]
+ *
+ * 新增 cron 时：在 wrangler.toml [triggers.crons] 加表达式，并在下面 switch 加 case。
+ * 表达式字符串必须与 wrangler.toml 完全一致（含空格）。
  */
 export async function handleScheduled(
   event: ScheduledEvent,
   env: Env,
   ctx: ExecutionContext
 ): Promise<void> {
-  // event.cron 是 wrangler.toml [triggers.crons] 中触发本次的具体表达式
-  if (event.cron === '*/10 * * * *') {
-    ctx.waitUntil(runSampleTick(env))
-    return
+  switch (event.cron) {
+    case '*/10 * * * *':
+      ctx.waitUntil(runSampleTick(env))
+      return
+    case '0 */12 * * *':
+      ctx.waitUntil(runTop100Sync(env))
+      return
+    default:
+      console.error(`[Cron] 未知 cron 表达式: ${event.cron}`)
   }
-  // 默认（含 "0 */12 * * *"）：触发 TOP100 sync 任务
-  ctx.waitUntil(enqueueAllEncounters(env))
 }
 
 async function runSampleTick(env: Env): Promise<void> {
@@ -160,52 +158,17 @@ async function runSampleTick(env: Env): Promise<void> {
 }
 
 /**
- * Queue 消费者：处理队列消息
+ * 直接串行同步所有副本的 TOP100（每场 ~1-2s × ~9 场，总耗时在 Worker 30s 预算内）。
+ * 单场失败由 syncAllTop100 内部 try/catch 隔离，不影响其他副本。
  */
-export async function handleQueue(batch: MessageBatch, env: Env): Promise<void> {
+async function runTop100Sync(env: Env): Promise<void> {
+  console.log('[TOP100 Sync] 启动')
   const client = createClient(env)
-
-  for (const message of batch.messages) {
-    try {
-      const body = message.body as QueueMessageBody
-      if (body.type === 'sync-encounter') {
-        const encounter = ALL_ENCOUNTERS.find(e => e.id === body.encounterId)
-        if (!encounter) {
-          console.error(`[Queue] 未找到遭遇战: ${body.encounterId}`)
-          message.ack()
-          continue
-        }
-        await syncEncounter(encounter, client, env.healerbook, env.healerbook_timelines)
-      } else {
-        console.error(`[Queue] 未知的消息类型: ${(body as { type: string }).type}`)
-      }
-      message.ack()
-    } catch (err) {
-      console.error('[Queue] 处理失败:', err)
-      message.retry()
-    }
-  }
-}
-
-/**
- * 将所有遭遇战推送到队列
- */
-async function enqueueAllEncounters(env: Env): Promise<void> {
-  console.log('[TOP100 Sync] 开始推送任务到队列...')
-
-  try {
-    const messages = ALL_ENCOUNTERS.map(encounter => ({
-      body: {
-        type: 'sync-encounter',
-        encounterId: encounter.id,
-      },
-    }))
-
-    await env.TOP100_SYNC_QUEUE.sendBatch(messages)
-    console.log(`[TOP100 Sync] 已推送 ${messages.length} 个任务到队列`)
-  } catch (err) {
-    console.error('[TOP100 Sync] 推送任务失败:', err)
-  }
+  const result = await syncAllTop100(client, env.healerbook, env.healerbook_timelines)
+  console.log(
+    `[TOP100 Sync] 结束 (success=${result.success}, failed=${result.failed})` +
+      (result.errors.length > 0 ? `, errors=${result.errors.join('; ')}` : '')
+  )
 }
 
 /**
@@ -318,16 +281,21 @@ function verifyAuth(request: Request, env: Env): boolean {
  * 手动触发 TOP100 同步（POST /api/top100/sync）
  * 用于开发测试，生产中建议通过 Cron 触发
  * 需要 Authorization: Bearer <token> 鉴权
+ *
+ * 同步执行（不返回直到 syncAllTop100 完成），便于手动触发后立即看结果。
  */
 async function handleManualSync(request: Request, env: Env): Promise<Response> {
-  // 验证鉴权
   if (!verifyAuth(request, env)) {
     return jsonResponse({ error: 'Unauthorized' }, 401)
   }
 
-  // 推送所有任务到队列
-  await enqueueAllEncounters(env)
-  return jsonResponse({ message: '已推送所有同步任务到队列', count: ALL_ENCOUNTERS.length })
+  const client = createClient(env)
+  const result = await syncAllTop100(client, env.healerbook, env.healerbook_timelines)
+  return jsonResponse({
+    message: `已完成同步：${result.success} 成功 / ${result.failed} 失败`,
+    total: ALL_ENCOUNTERS.length,
+    ...result,
+  })
 }
 
 /**

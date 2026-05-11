@@ -13,8 +13,11 @@ export interface SampleQueueRow {
   fight_id: number
   duration_ms: number
   sampled: number
+  /** 整数秒（unix epoch），未采样时为 null */
   sampled_at: number | null
+  /** 整数秒（unix epoch） */
   created_at: number
+  /** 整数秒（unix epoch），应用层 UPDATE 时显式覆盖 */
   updated_at: number
 }
 
@@ -55,7 +58,7 @@ export async function enqueueRankings(
  * 排序：encounter 内 MAX(sampled_at) NULLS FIRST 升序（从未采样过的 encounter 最优先）。
  */
 export async function pickNextSample(db: D1Database): Promise<SampleQueueRow | null> {
-  const now = Date.now()
+  const now = Math.floor(Date.now() / 1000)
   const result = await db
     .prepare(
       `UPDATE samples_queue

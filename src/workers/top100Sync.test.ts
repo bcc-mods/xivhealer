@@ -2,20 +2,25 @@ import { describe, it, expect } from 'vitest'
 import {
   mergeWithReservoirSampling,
   getSamplesKVKey,
+  getStatisticsKVKey,
   calculatePercentiles,
   slimDamageEvents,
   buildEncounterTemplate,
-  aggregateStatistics,
+  extractFightStats,
   getEncounterTemplateKVKey,
-  getFightStatisticsKVKey,
   handleGetEncounterTemplate,
+  processOneSample,
   type StoredDamageEvent,
   type EncounterTemplate,
-  type FightStatistics,
-  type StatisticsTask,
+  type ExtractedFightData,
+  type EncounterSamples,
 } from './top100Sync'
+import type { SampleQueueRow } from './samplesQueue'
 import { calculatePercentile } from '@/utils/stats'
 import type { DamageEvent } from '@/types/timeline'
+import type { FFLogsV1Report, FFLogsEvent } from '@/types/fflogs'
+import type { EncounterStatistics } from '@/types/mitigation'
+import type { Job } from '@/data/jobs'
 
 describe('mergeWithReservoirSampling', () => {
   it('总量未超上限时直接追加', () => {
@@ -138,160 +143,109 @@ describe('slimDamageEvents', () => {
   })
 })
 
-describe('buildEncounterTemplate', () => {
-  // 辅助：构造一条精简事件
-  function makeEvent(
-    partial: Partial<StoredDamageEvent> & { abilityId: number; time: number }
-  ): StoredDamageEvent {
-    return {
-      name: partial.name ?? `ability-${partial.abilityId}`,
-      time: partial.time,
-      damage: partial.damage ?? 1000,
-      type: partial.type ?? 'aoe',
-      damageType: partial.damageType ?? 'magical',
-      abilityId: partial.abilityId,
-    }
+describe('buildEncounterTemplate (single-fight)', () => {
+  function makeSlim(abilityId: number, time: number, damage = 1000): StoredDamageEvent {
+    return { name: `a-${abilityId}`, time, damage, type: 'aoe', damageType: 'magical', abilityId }
   }
 
-  it('返回 null 当候选场为空', () => {
+  it('无旧模板 → 用本场骨架产出新模板', () => {
+    const events = [makeSlim(1, 1, 100), makeSlim(2, 2, 200)]
     const result = buildEncounterTemplate({
-      candidates: [],
+      fightDurationMs: 120_000,
+      fightEvents: events,
+      p50Map: { 1: 555, 2: 666 },
+      oldTemplate: null,
+    })
+    expect(result).not.toBeNull()
+    expect(result!.templateSourceDurationMs).toBe(120_000)
+    expect(result!.events).toHaveLength(2)
+    const byId = Object.fromEntries(result!.events.map(e => [e.abilityId!, e.damage]))
+    expect(byId[1]).toBe(555)
+    expect(byId[2]).toBe(666)
+  })
+
+  it('本场更长 → 覆盖', () => {
+    const oldTemplate = {
+      encounterId: 1,
+      events: [],
+      templateSourceDurationMs: 100_000,
+      updatedAt: 'x',
+    }
+    const result = buildEncounterTemplate({
+      fightDurationMs: 100_001,
+      fightEvents: [makeSlim(1, 1)],
       p50Map: {},
-      threshold: 3,
+      oldTemplate,
+    })
+    expect(result).not.toBeNull()
+    expect(result!.templateSourceDurationMs).toBe(100_001)
+  })
+
+  it('本场等长 → 不覆盖（严格 >）', () => {
+    const oldTemplate = {
+      encounterId: 1,
+      events: [],
+      templateSourceDurationMs: 100_000,
+      updatedAt: 'x',
+    }
+    const result = buildEncounterTemplate({
+      fightDurationMs: 100_000,
+      fightEvents: [makeSlim(1, 1)],
+      p50Map: {},
+      oldTemplate,
     })
     expect(result).toBeNull()
   })
 
-  it('挑选 durationMs 最大的战斗作为模板', () => {
-    const candidates = [
-      {
-        durationMs: 100_000,
-        events: [makeEvent({ abilityId: 1, time: 5 })],
-      },
-      {
-        durationMs: 300_000,
-        events: [makeEvent({ abilityId: 1, time: 5 }), makeEvent({ abilityId: 2, time: 15 })],
-      },
-      {
-        durationMs: 200_000,
-        events: [makeEvent({ abilityId: 1, time: 5 })],
-      },
-    ]
+  it('本场更短 → 不覆盖', () => {
+    const oldTemplate = {
+      encounterId: 1,
+      events: [],
+      templateSourceDurationMs: 100_000,
+      updatedAt: 'x',
+    }
     const result = buildEncounterTemplate({
-      candidates,
-      p50Map: { 1: 500, 2: 800 },
-      threshold: 2, // ability=1 出现 3 场 OK, ability=2 只出现 1 场被过滤
-    })
-    expect(result?.templateSourceDurationMs).toBe(300_000)
-    expect(result?.events).toHaveLength(1)
-    expect(result?.events[0].abilityId).toBe(1)
-  })
-
-  it('过滤 abilityId 出现场数 < threshold 的事件', () => {
-    const candidates = [
-      {
-        durationMs: 100,
-        events: [makeEvent({ abilityId: 1, time: 1 }), makeEvent({ abilityId: 2, time: 2 })],
-      },
-      {
-        durationMs: 200, // 最长
-        events: [
-          makeEvent({ abilityId: 1, time: 1 }),
-          makeEvent({ abilityId: 2, time: 2 }),
-          makeEvent({ abilityId: 99, time: 3 }), // 只在本场出现
-        ],
-      },
-      {
-        durationMs: 150,
-        events: [makeEvent({ abilityId: 1, time: 1 }), makeEvent({ abilityId: 2, time: 2 })],
-      },
-    ]
-    const result = buildEncounterTemplate({
-      candidates,
+      fightDurationMs: 50_000,
+      fightEvents: [makeSlim(1, 1)],
       p50Map: {},
-      threshold: 3,
+      oldTemplate,
     })
-    // ability 1 出现 3 场 ✓, ability 2 出现 3 场 ✓, ability 99 出现 1 场 ✗
-    expect(result?.events.map(e => e.abilityId).sort()).toEqual([1, 2])
+    expect(result).toBeNull()
   })
 
-  it('同一场内同 abilityId 多次出现只算一场（去重）', () => {
-    const candidates = [
-      {
-        durationMs: 200,
-        events: [
-          makeEvent({ abilityId: 1, time: 1 }),
-          makeEvent({ abilityId: 1, time: 2 }), // 同场同 ability，算 1 场
-        ],
-      },
-      { durationMs: 100, events: [makeEvent({ abilityId: 1, time: 1 })] },
-    ]
+  it('damage 字段用 p50Map 覆盖，无 p50 时 fallback 到原值', () => {
     const result = buildEncounterTemplate({
-      candidates,
-      p50Map: {},
-      threshold: 3,
-    })
-    // ability 1 只在 2 场出现（场数去重），< 3 被过滤
-    expect(result?.events).toHaveLength(0)
-  })
-
-  it('damage 字段用 p50Map 覆盖，无 p50 时保留原值', () => {
-    const candidates = [
-      {
-        durationMs: 100,
-        events: [
-          makeEvent({ abilityId: 1, time: 1, damage: 9999 }),
-          makeEvent({ abilityId: 2, time: 2, damage: 8888 }),
-        ],
-      },
-      {
-        durationMs: 100,
-        events: [
-          makeEvent({ abilityId: 1, time: 1, damage: 9999 }),
-          makeEvent({ abilityId: 2, time: 2, damage: 8888 }),
-        ],
-      },
-      {
-        durationMs: 100,
-        events: [
-          makeEvent({ abilityId: 1, time: 1, damage: 9999 }),
-          makeEvent({ abilityId: 2, time: 2, damage: 8888 }),
-        ],
-      },
-    ]
-    const result = buildEncounterTemplate({
-      candidates,
-      p50Map: { 1: 500 }, // 只有 ability 1 有 p50
-      threshold: 3,
+      fightDurationMs: 100,
+      fightEvents: [makeSlim(1, 1, 9999), makeSlim(2, 2, 8888)],
+      p50Map: { 1: 500 },
+      oldTemplate: null,
     })
     const byId = Object.fromEntries(result!.events.map(e => [e.abilityId!, e.damage]))
-    expect(byId[1]).toBe(500) // 被 p50 覆盖
-    expect(byId[2]).toBe(8888) // fallback 到原值
+    expect(byId[1]).toBe(500)
+    expect(byId[2]).toBe(8888)
   })
 
   it('每个事件带不同的 nanoid id', () => {
-    const candidates = [
-      {
-        durationMs: 100,
-        events: [makeEvent({ abilityId: 1, time: 1 }), makeEvent({ abilityId: 2, time: 2 })],
-      },
-      {
-        durationMs: 100,
-        events: [makeEvent({ abilityId: 1, time: 1 }), makeEvent({ abilityId: 2, time: 2 })],
-      },
-      {
-        durationMs: 100,
-        events: [makeEvent({ abilityId: 1, time: 1 }), makeEvent({ abilityId: 2, time: 2 })],
-      },
-    ]
     const result = buildEncounterTemplate({
-      candidates,
+      fightDurationMs: 100,
+      fightEvents: [makeSlim(1, 1), makeSlim(2, 2), makeSlim(3, 3)],
       p50Map: {},
-      threshold: 3,
+      oldTemplate: null,
     })
     const ids = result!.events.map(e => e.id)
-    expect(new Set(ids).size).toBe(ids.length) // 所有 id 唯一
-    for (const id of ids) expect(id).toMatch(/\S+/) // 非空
+    expect(new Set(ids).size).toBe(ids.length)
+    for (const id of ids) expect(id).toMatch(/\S+/)
+  })
+
+  it('空 events → 空 template（仍写）', () => {
+    const result = buildEncounterTemplate({
+      fightDurationMs: 100,
+      fightEvents: [],
+      p50Map: {},
+      oldTemplate: null,
+    })
+    expect(result).not.toBeNull()
+    expect(result!.events).toHaveLength(0)
   })
 })
 
@@ -321,136 +275,6 @@ function createMockKV(): KVNamespace & { _store: Map<string, string> } {
   } as unknown as KVNamespace & { _store: Map<string, string> }
   return kv
 }
-
-describe('aggregateStatistics — encounter template 覆盖策略 A', () => {
-  const encounterId = 1234
-
-  function makeFightStat(
-    reportCode: string,
-    fightID: number,
-    durationMs: number,
-    events: StoredDamageEvent[]
-  ): FightStatistics {
-    return {
-      encounterId,
-      reportCode,
-      fightID,
-      damageByAbility: events.reduce<Record<number, number[]>>((acc, e) => {
-        const id = e.abilityId ?? 0
-        if (!acc[id]) acc[id] = []
-        acc[id].push(e.damage)
-        return acc
-      }, {}),
-      maxHPByJob: {} as FightStatistics['maxHPByJob'],
-      shieldByAbility: {},
-      healByAbility: {},
-      durationMs,
-      damageEvents: events,
-    }
-  }
-
-  function makeSlim(abilityId: number, time: number, damage = 1000): StoredDamageEvent {
-    return {
-      name: `ability-${abilityId}`,
-      time,
-      damage,
-      type: 'aoe',
-      damageType: 'magical',
-      abilityId,
-    }
-  }
-
-  async function seedAndRun(
-    kv: ReturnType<typeof createMockKV>,
-    fights: Array<{ reportCode: string; fightID: number; stats: FightStatistics }>
-  ) {
-    for (const f of fights) {
-      await kv.put(
-        getFightStatisticsKVKey(encounterId, f.reportCode, f.fightID),
-        JSON.stringify(f.stats)
-      )
-    }
-    const task: StatisticsTask = {
-      encounterId,
-      encounterName: 'test',
-      totalFights: fights.length,
-      fights: fights.map(f => ({ reportCode: f.reportCode, fightID: f.fightID })),
-      createdAt: new Date().toISOString(),
-    }
-    await aggregateStatistics(task, kv)
-  }
-
-  it('无旧模板 → 写入新模板', async () => {
-    const kv = createMockKV()
-    const events = [makeSlim(1, 1), makeSlim(2, 2)]
-    await seedAndRun(kv, [
-      { reportCode: 'a', fightID: 1, stats: makeFightStat('a', 1, 100_000, events) },
-      { reportCode: 'b', fightID: 1, stats: makeFightStat('b', 1, 100_000, events) },
-      { reportCode: 'c', fightID: 1, stats: makeFightStat('c', 1, 100_000, events) },
-    ])
-    const stored = await kv.get(getEncounterTemplateKVKey(encounterId), 'json')
-    const template = stored as EncounterTemplate
-    expect(template).not.toBeNull()
-    expect(template.templateSourceDurationMs).toBe(100_000)
-    expect(template.events).toHaveLength(2)
-  })
-
-  it('新 batch 更短 → 保持旧模板不动', async () => {
-    const kv = createMockKV()
-    const old: EncounterTemplate = {
-      encounterId,
-      events: [
-        {
-          id: 'old-1',
-          name: 'old-event',
-          time: 5,
-          damage: 9999,
-          type: 'aoe',
-          damageType: 'magical',
-          abilityId: 42,
-        },
-      ],
-      templateSourceDurationMs: 500_000,
-      updatedAt: '2026-01-01T00:00:00.000Z',
-    }
-    await kv.put(getEncounterTemplateKVKey(encounterId), JSON.stringify(old))
-
-    const events = [makeSlim(1, 1)]
-    await seedAndRun(kv, [
-      { reportCode: 'a', fightID: 1, stats: makeFightStat('a', 1, 100_000, events) },
-      { reportCode: 'b', fightID: 1, stats: makeFightStat('b', 1, 100_000, events) },
-      { reportCode: 'c', fightID: 1, stats: makeFightStat('c', 1, 100_000, events) },
-    ])
-
-    const stored = await kv.get(getEncounterTemplateKVKey(encounterId), 'json')
-    const template = stored as EncounterTemplate
-    expect(template.templateSourceDurationMs).toBe(500_000)
-    expect(template.events[0].id).toBe('old-1') // 未动
-  })
-
-  it('新 batch 更长 → 覆盖旧模板', async () => {
-    const kv = createMockKV()
-    const old: EncounterTemplate = {
-      encounterId,
-      events: [],
-      templateSourceDurationMs: 100_000,
-      updatedAt: '2026-01-01T00:00:00.000Z',
-    }
-    await kv.put(getEncounterTemplateKVKey(encounterId), JSON.stringify(old))
-
-    const events = [makeSlim(1, 1)]
-    await seedAndRun(kv, [
-      { reportCode: 'a', fightID: 1, stats: makeFightStat('a', 1, 500_000, events) },
-      { reportCode: 'b', fightID: 1, stats: makeFightStat('b', 1, 500_000, events) },
-      { reportCode: 'c', fightID: 1, stats: makeFightStat('c', 1, 500_000, events) },
-    ])
-
-    const stored = await kv.get(getEncounterTemplateKVKey(encounterId), 'json')
-    const template = stored as EncounterTemplate
-    expect(template.templateSourceDurationMs).toBe(500_000)
-    expect(template.events).toHaveLength(1)
-  })
-})
 
 describe('handleGetEncounterTemplate', () => {
   it('KV 无数据 → 返回空事件列表', async () => {
@@ -493,3 +317,296 @@ describe('handleGetEncounterTemplate', () => {
     expect(body.updatedAt).toBe('2026-04-14T00:00:00.000Z')
   })
 })
+
+describe('extractFightStats', () => {
+  it('damage / heal / shield / maxHP 全提取，slim events 含 abilityId', () => {
+    const fight = { id: 5, start_time: 1000, end_time: 121000 } as FFLogsV1Report['fights'][number]
+    const report = {
+      fights: [fight],
+      friendlies: [{ id: 7, name: 'Healer', type: 'WhiteMage' }],
+      abilities: [{ gameID: 50, name: 'Hit', type: 16 }],
+      enemies: [],
+      enemyPets: [],
+      friendlyPets: [],
+      lang: 'en',
+      title: 't',
+      owner: 'o',
+      start: 0,
+      end: 1,
+      zone: 0,
+    } as unknown as FFLogsV1Report
+
+    const events = [
+      {
+        type: 'damage',
+        timestamp: 1500,
+        abilityGameID: 9999,
+        unmitigatedAmount: 50000,
+        sourceID: 99,
+        targetID: 7,
+      },
+      {
+        type: 'heal',
+        timestamp: 1700,
+        abilityGameID: 50,
+        amount: 1000,
+        sourceID: 7,
+        targetID: 7,
+        targetResources: { maxHitPoints: 80000 },
+      },
+      {
+        type: 'absorbed',
+        timestamp: 1800,
+        abilityGameID: 1002613,
+        amount: 3000,
+        sourceID: 7,
+        targetID: 7,
+      },
+    ] as unknown as FFLogsEvent[]
+
+    const out = extractFightStats(report, fight, events)
+    expect(out.durationMs).toBe(120000)
+    expect(out.damageByAbility[9999]).toEqual([50000])
+    expect(out.healByAbility[50]).toEqual([1000])
+    expect(out.shieldByAbility[2613]).toEqual([3000])
+    expect(Object.values(out.maxHPByJob).flat()).toContain(80000)
+    if (out.damageEvents.length > 0) {
+      expect(typeof out.damageEvents[0].abilityId).toBe('number')
+    }
+  })
+})
+
+describe('processOneSample', () => {
+  const encounterId = 1234
+  const encounterName = 'Test Encounter'
+
+  it('队列空 → 直接返回 false，KV 无变更', async () => {
+    const kv = createMockKV()
+    const db = makeMockD1Empty()
+    const ranOnce = await processOneSample({
+      db,
+      kv,
+      fetchExtracted: async () => {
+        throw new Error('should not be called')
+      },
+      lookupEncounterName: () => encounterName,
+    })
+    expect(ranOnce).toBe(false)
+    expect(kv._store.size).toBe(0)
+  })
+
+  it('首次采样：写 samples / statistics / template，且累加 abilityFightCount', async () => {
+    const kv = createMockKV()
+    const db = makeMockD1WithRow({
+      id: 1,
+      encounter_id: encounterId,
+      report_code: 'A',
+      fight_id: 1,
+      duration_ms: 120_000,
+      sampled: 0,
+      sampled_at: null,
+      created_at: 0,
+      updated_at: 0,
+    })
+    const extracted: ExtractedFightData = {
+      damageByAbility: { 9999: [50_000, 60_000], 8888: [10_000] },
+      shieldByAbility: { 2613: [3000] },
+      maxHPByJob: { WHM: [80_000] } as Record<Job, number[]>,
+      healByAbility: { 50: [1000, 1500] },
+      durationMs: 120_000,
+      damageEvents: [
+        {
+          name: 'a-9999',
+          time: 1,
+          damage: 55_000,
+          type: 'aoe',
+          damageType: 'magical',
+          abilityId: 9999,
+        },
+        {
+          name: 'a-9999',
+          time: 5,
+          damage: 55_000,
+          type: 'aoe',
+          damageType: 'magical',
+          abilityId: 9999,
+        },
+        {
+          name: 'a-8888',
+          time: 7,
+          damage: 10_000,
+          type: 'aoe',
+          damageType: 'magical',
+          abilityId: 8888,
+        },
+      ],
+    }
+
+    const ranOnce = await processOneSample({
+      db,
+      kv,
+      fetchExtracted: async () => extracted,
+      lookupEncounterName: () => encounterName,
+    })
+    expect(ranOnce).toBe(true)
+
+    const samples = (await kv.get(getSamplesKVKey(encounterId), 'json')) as EncounterSamples
+    expect(samples.damageByAbility[9999]).toEqual([50_000, 60_000])
+    expect(samples.healByAbility[50]).toEqual([1000, 1500])
+
+    const stats = (await kv.get(getStatisticsKVKey(encounterId), 'json')) as EncounterStatistics
+    expect(stats.totalFightsSampled).toBe(1)
+    expect(stats.abilityFightCount[9999]).toBe(1)
+    expect(stats.abilityFightCount[8888]).toBe(1)
+    expect(stats.damageByAbility[9999]).toBeGreaterThan(0)
+
+    const tpl = (await kv.get(getEncounterTemplateKVKey(encounterId), 'json')) as EncounterTemplate
+    expect(tpl.templateSourceDurationMs).toBe(120_000)
+    expect(tpl.events.length).toBeGreaterThan(0)
+  })
+
+  it('第二次采样：abilityFightCount/totalFightsSampled 累加，旧字段不丢', async () => {
+    const kv = createMockKV()
+    await kv.put(
+      getStatisticsKVKey(encounterId),
+      JSON.stringify({
+        encounterId,
+        encounterName,
+        damageByAbility: { 9999: 50000 },
+        maxHPByJob: {},
+        shieldByAbility: {},
+        critShieldByAbility: {},
+        healByAbility: {},
+        critHealByAbility: {},
+        sampleSize: 2,
+        abilityFightCount: { 9999: 1, 8888: 1 },
+        totalFightsSampled: 1,
+        updatedAt: 'old',
+      } satisfies EncounterStatistics)
+    )
+    await kv.put(
+      getSamplesKVKey(encounterId),
+      JSON.stringify({
+        encounterId,
+        damageByAbility: { 9999: [50_000, 60_000], 8888: [10_000] },
+        shieldByAbility: {},
+        maxHPByJob: {},
+        healByAbility: {},
+        updatedAt: 'old',
+      })
+    )
+
+    const db = makeMockD1WithRow({
+      id: 2,
+      encounter_id: encounterId,
+      report_code: 'B',
+      fight_id: 1,
+      duration_ms: 100_000,
+      sampled: 0,
+      sampled_at: null,
+      created_at: 0,
+      updated_at: 0,
+    })
+    const extracted: ExtractedFightData = {
+      damageByAbility: { 9999: [70_000], 7777: [20_000] },
+      shieldByAbility: {},
+      maxHPByJob: {} as Record<Job, number[]>,
+      healByAbility: {},
+      durationMs: 100_000,
+      damageEvents: [
+        {
+          name: 'a-9999',
+          time: 1,
+          damage: 70_000,
+          type: 'aoe',
+          damageType: 'magical',
+          abilityId: 9999,
+        },
+        {
+          name: 'a-7777',
+          time: 2,
+          damage: 20_000,
+          type: 'aoe',
+          damageType: 'magical',
+          abilityId: 7777,
+        },
+      ],
+    }
+
+    await processOneSample({
+      db,
+      kv,
+      fetchExtracted: async () => extracted,
+      lookupEncounterName: () => encounterName,
+    })
+
+    const stats = (await kv.get(getStatisticsKVKey(encounterId), 'json')) as EncounterStatistics
+    expect(stats.totalFightsSampled).toBe(2)
+    expect(stats.abilityFightCount[9999]).toBe(2)
+    expect(stats.abilityFightCount[8888]).toBe(1)
+    expect(stats.abilityFightCount[7777]).toBe(1)
+  })
+
+  it('本场更短 → template 不更新', async () => {
+    const kv = createMockKV()
+    await kv.put(
+      getEncounterTemplateKVKey(encounterId),
+      JSON.stringify({
+        encounterId,
+        events: [],
+        templateSourceDurationMs: 999_000,
+        updatedAt: 'old',
+      } satisfies EncounterTemplate)
+    )
+
+    const db = makeMockD1WithRow({
+      id: 3,
+      encounter_id: encounterId,
+      report_code: 'C',
+      fight_id: 1,
+      duration_ms: 100_000,
+      sampled: 0,
+      sampled_at: null,
+      created_at: 0,
+      updated_at: 0,
+    })
+
+    await processOneSample({
+      db,
+      kv,
+      fetchExtracted: async () => ({
+        damageByAbility: {},
+        shieldByAbility: {},
+        maxHPByJob: {} as Record<Job, number[]>,
+        healByAbility: {},
+        durationMs: 100_000,
+        damageEvents: [],
+      }),
+      lookupEncounterName: () => encounterName,
+    })
+    const tpl = (await kv.get(getEncounterTemplateKVKey(encounterId), 'json')) as EncounterTemplate
+    expect(tpl.templateSourceDurationMs).toBe(999_000)
+  })
+})
+
+function makeMockD1Empty(): D1Database {
+  return {
+    prepare: () => ({
+      bind: () => ({ first: async () => null }),
+    }),
+  } as unknown as D1Database
+}
+function makeMockD1WithRow(row: SampleQueueRow): D1Database {
+  let consumed = false
+  return {
+    prepare: () => ({
+      bind: () => ({
+        first: async () => {
+          if (consumed) return null
+          consumed = true
+          return row
+        },
+      }),
+    }),
+  } as unknown as D1Database
+}

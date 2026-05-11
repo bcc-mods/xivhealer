@@ -7,6 +7,7 @@
  */
 
 import { FFLogsClientV2, type RankingEntry } from './fflogsClientV2'
+import { pickNextSample, type SampleQueueRow } from './samplesQueue'
 import { ALL_ENCOUNTERS, type RaidEncounter } from '@/data/raidEncounters'
 import type { FFLogsEvent, FFLogsV1Report, FFLogsAbility, FFLogsReport } from '@/types/fflogs'
 import type { EncounterStatistics } from '@/types/mitigation'
@@ -65,6 +66,55 @@ export interface FightStatistics {
   damageEvents: StoredDamageEvent[]
 }
 
+/**
+ * 单场 fight 提取后的纯数据（不含 reportCode/fightID/encounterId 三件套）
+ */
+export interface ExtractedFightData {
+  damageByAbility: Record<number, number[]>
+  maxHPByJob: Record<Job, number[]>
+  shieldByAbility: Record<number, number[]>
+  healByAbility: Record<number, number[]>
+  durationMs: number
+  damageEvents: StoredDamageEvent[]
+}
+
+/**
+ * 从单场 fight 的 report + events 提取四类原始样本 + slim damage events。
+ * 不做任何 KV 写入，纯函数易于测试与复用。
+ */
+export function extractFightStats(
+  report: FFLogsV1Report,
+  fight: FFLogsV1Report['fights'][number],
+  events: FFLogsEvent[]
+): ExtractedFightData {
+  const damageByAbility = extractDamageData(events)
+  const shieldByAbility = extractShieldData(events)
+  const maxHPByJob = extractMaxHPData(events, report)
+  const healByAbility = extractHealData(events)
+
+  const playerMap = new Map<number, { id: number; name: string; type: string }>()
+  for (const actor of report.friendlies ?? []) {
+    playerMap.set(actor.id, { id: actor.id, name: actor.name, type: actor.type })
+  }
+  const abilityMap = new Map<number, FFLogsAbility>()
+  for (const ability of report.abilities ?? []) {
+    abilityMap.set(ability.gameID, ability)
+  }
+
+  const composition = parseComposition(report as unknown as FFLogsReport, fight.id)
+  const fullDamageEvents = parseDamageEvents(
+    events,
+    fight.start_time,
+    playerMap,
+    abilityMap,
+    composition
+  )
+  const damageEvents = slimDamageEvents(fullDamageEvents)
+  const durationMs = fight.end_time - fight.start_time
+
+  return { damageByAbility, shieldByAbility, maxHPByJob, healByAbility, durationMs, damageEvents }
+}
+
 /** 模板事件：DamageEvent + abilityId（仅模板聚合/过滤内部使用，非持久化字段） */
 export type EncounterTemplateEvent = DamageEvent & { abilityId?: number }
 
@@ -84,60 +134,50 @@ export function getEncounterTemplateKVKey(encounterId: number): string {
 }
 
 interface BuildEncounterTemplateInput {
-  /** 本批次所有战斗的 slim 事件列表 + 时长 */
-  candidates: Array<{ durationMs: number; events: StoredDamageEvent[] }>
-  /** abilityId → p50 伤害数字（来自 calculatePercentiles(mergedDamage)） */
+  /** 本场 fight 的时长（毫秒） */
+  fightDurationMs: number
+  /** 本场 fight 的 slim damage events */
+  fightEvents: StoredDamageEvent[]
+  /** abilityId → p50 伤害（来自最新 statistics 的 calculatePercentiles 输出） */
   p50Map: Record<number, number>
-  /** 过滤阈值：abilityId 必须在至少多少场中出现才保留 */
-  threshold: number
+  /** 旧 template（KV 中的当前值），null 表示不存在 */
+  oldTemplate: EncounterTemplate | null
 }
 
 /**
- * 从本批次候选场构建 encounter template
- * - 挑 durationMs 最大的一场为模板
- * - 过滤 abilityId 出现场数 < threshold 的事件（每场去重）
- * - 用 p50Map 覆盖每个保留事件的 damage；无 p50 时保留模板原值
- * - 生成 nanoid id 填入每个事件
+ * 单场版 encounter template 构建。
  *
- * 返回 null 当 candidates 为空。
+ * 行为：
+ * - 仅当 `fightDurationMs > oldTemplate.templateSourceDurationMs`（或旧 template 不存在）时返回新 template
+ * - 不做 abilityId 出现场数过滤；前端可用 `EncounterStatistics.abilityFightCount` 自行过滤
+ * - 每个保留事件的 `damage` 用 `p50Map[abilityId]` 覆盖；无 p50 时保留原 damage
+ * - 每个事件重新 generateId
+ *
+ * 返回 null 表示"无需写入"（不是错误）。
  */
-export function buildEncounterTemplate(
-  input: BuildEncounterTemplateInput
-): { events: EncounterTemplateEvent[]; templateSourceDurationMs: number } | null {
-  const { candidates, p50Map, threshold } = input
-  if (candidates.length === 0) return null
+export function buildEncounterTemplate(input: BuildEncounterTemplateInput): {
+  events: EncounterTemplateEvent[]
+  templateSourceDurationMs: number
+} | null {
+  const { fightDurationMs, fightEvents, p50Map, oldTemplate } = input
 
-  // 挑最长战斗
-  const templateFight = candidates.reduce((max, curr) =>
-    curr.durationMs > max.durationMs ? curr : max
-  )
-
-  // 统计 abilityId 出现场数（每场去重）
-  const abilityFightCount = new Map<number, number>()
-  for (const fight of candidates) {
-    const seenIds = new Set<number>()
-    for (const ev of fight.events) seenIds.add(ev.abilityId ?? 0)
-    for (const id of seenIds) {
-      abilityFightCount.set(id, (abilityFightCount.get(id) ?? 0) + 1)
-    }
+  if (oldTemplate && fightDurationMs <= oldTemplate.templateSourceDurationMs) {
+    return null
   }
 
-  // 过滤 + 组装完整 DamageEvent
-  const events: EncounterTemplateEvent[] = templateFight.events
-    .filter(e => (abilityFightCount.get(e.abilityId ?? 0) ?? 0) >= threshold)
-    .map(e => ({
-      id: generateId(),
-      name: e.name,
-      time: e.time,
-      damage: p50Map[e.abilityId ?? 0] ?? e.damage,
-      type: e.type,
-      damageType: e.damageType,
-      packetId: e.packetId,
-      snapshotTime: e.snapshotTime,
-      abilityId: e.abilityId,
-    }))
+  const events: EncounterTemplateEvent[] = fightEvents.map(e => ({
+    id: generateId(),
+    name: e.name,
+    time: e.time,
+    damage: p50Map[e.abilityId ?? 0] ?? e.damage,
+    type: e.type,
+    damageType: e.damageType,
+    packetId: e.packetId,
+    snapshotTime: e.snapshotTime,
+    abilityId: e.abilityId,
+  }))
 
-  return { events, templateSourceDurationMs: templateFight.durationMs }
+  return { events, templateSourceDurationMs: fightDurationMs }
 }
 
 /** 样本存储（低频访问，供定时任务读写） */
@@ -407,72 +447,32 @@ export async function extractFightStatistics(
   kv: KVNamespace
 ): Promise<void> {
   console.log(`[Statistics] 提取战斗数据: ${reportCode}/${fightID}`)
-
   try {
-    // 获取战斗报告
     const report = await client.getReport({ reportCode })
     const fight = report.fights.find(f => f.id === fightID)
-    if (!fight) {
-      throw new Error(`Fight ${fightID} not found`)
-    }
+    if (!fight) throw new Error(`Fight ${fightID} not found`)
 
-    // 获取战斗事件
     const eventsResponse = await client.getEvents({
       reportCode,
       start: fight.start_time,
       end: fight.end_time,
     })
 
-    // 提取各类数据
-    const damageData = extractDamageData(eventsResponse.events)
-    const shieldData = extractShieldData(eventsResponse.events)
-    const maxHPData = extractMaxHPData(eventsResponse.events, report)
-    const healData = extractHealData(eventsResponse.events)
+    const extracted = extractFightStats(report, fight, eventsResponse.events)
 
-    // 构造 playerMap 和 abilityMap 以供 parseDamageEvents 使用
-    const playerMap = new Map<number, { id: number; name: string; type: string }>()
-    for (const actor of report.friendlies ?? []) {
-      playerMap.set(actor.id, { id: actor.id, name: actor.name, type: actor.type })
-    }
-    const abilityMap = new Map<number, FFLogsAbility>()
-    for (const ability of report.abilities ?? []) {
-      abilityMap.set(ability.gameID, ability)
-    }
-
-    // 解析完整 DamageEvent 后精简存储
-    const composition = parseComposition(report as unknown as FFLogsReport, fightID)
-    const fullDamageEvents = parseDamageEvents(
-      eventsResponse.events,
-      fight.start_time,
-      playerMap,
-      abilityMap,
-      composition
-    )
-    const slimEvents = slimDamageEvents(fullDamageEvents)
-    const durationMs = fight.end_time - fight.start_time
-
-    // 保存到临时 KV
     const battleStats: FightStatistics = {
       encounterId,
       reportCode,
       fightID,
-      damageByAbility: damageData,
-      maxHPByJob: maxHPData,
-      shieldByAbility: shieldData,
-      healByAbility: healData,
-      durationMs,
-      damageEvents: slimEvents,
+      ...extracted,
     }
 
     await kv.put(
       getFightStatisticsKVKey(encounterId, reportCode, fightID),
       JSON.stringify(battleStats),
-      { expirationTtl: 2 * 60 * 60 } // 2 小时过期
+      { expirationTtl: 2 * 60 * 60 }
     )
-
-    // 更新任务状态
     await updateStatisticsTaskProgress(encounterId, reportCode, fightID, kv)
-
     console.log(`[Statistics] 完成战斗数据提取: ${reportCode}/${fightID}`)
   } catch (err) {
     console.error(`[Statistics] 提取失败 (${reportCode}/${fightID}):`, err)
@@ -543,12 +543,6 @@ export async function aggregateStatistics(task: StatisticsTask, kv: KVNamespace)
   const batchShield: Record<number, number[]> = {}
   const batchHeal: Record<number, number[]> = {}
 
-  // 新增：encounter template 候选
-  const fightTemplateCandidates: Array<{
-    durationMs: number
-    events: StoredDamageEvent[]
-  }> = []
-
   // Step 1: 读取本批次所有临时战斗数据
   for (const battle of task.fights) {
     const key = getFightStatisticsKVKey(task.encounterId, battle.reportCode, battle.fightID)
@@ -578,19 +572,6 @@ export async function aggregateStatistics(task: StatisticsTask, kv: KVNamespace)
       const id = Number(abilityId)
       if (!batchHeal[id]) batchHeal[id] = []
       batchHeal[id].push(...(heals as number[]))
-    }
-
-    // 新增：累积 template 候选
-    if (
-      Array.isArray(battleStats.damageEvents) &&
-      battleStats.damageEvents.length > 0 &&
-      typeof battleStats.durationMs === 'number' &&
-      battleStats.durationMs > 0
-    ) {
-      fightTemplateCandidates.push({
-        durationMs: battleStats.durationMs,
-        events: battleStats.damageEvents,
-      })
     }
   }
 
@@ -653,6 +634,8 @@ export async function aggregateStatistics(task: StatisticsTask, kv: KVNamespace)
     critHealByAbility: calculatePercentiles(mergedHeal, 90),
     critShieldByAbility: calculatePercentiles(mergedShield, 90),
     sampleSize: Object.values(mergedDamage).reduce((sum, arr) => sum + arr.length, 0),
+    abilityFightCount: {},
+    totalFightsSampled: task.totalFights,
     updatedAt: new Date().toISOString(),
   }
 
@@ -660,39 +643,7 @@ export async function aggregateStatistics(task: StatisticsTask, kv: KVNamespace)
     expirationTtl: 25 * 60 * 60,
   })
 
-  // Step 5.5: 产出 encounter template（使用覆盖策略 A：新 batch 最长 >= 旧值才写）
-  const p50Map = calculatePercentiles(mergedDamage)
-  const built = buildEncounterTemplate({
-    candidates: fightTemplateCandidates,
-    p50Map,
-    threshold: 3,
-  })
-  if (built) {
-    const templateKey = getEncounterTemplateKVKey(task.encounterId)
-    const oldTemplateRaw = await kv.get(templateKey, 'json')
-    const oldTemplate = oldTemplateRaw as EncounterTemplate | null
-    const shouldOverwrite =
-      !oldTemplate || built.templateSourceDurationMs >= oldTemplate.templateSourceDurationMs
-
-    if (shouldOverwrite) {
-      const newTemplate: EncounterTemplate = {
-        encounterId: task.encounterId,
-        events: built.events,
-        templateSourceDurationMs: built.templateSourceDurationMs,
-        updatedAt: new Date().toISOString(),
-      }
-      await kv.put(templateKey, JSON.stringify(newTemplate), {
-        expirationTtl: 25 * 60 * 60,
-      })
-      console.log(
-        `[Template] ${task.encounterId}: 写入模板 (${built.events.length} 事件, duration ${built.templateSourceDurationMs}ms)`
-      )
-    } else {
-      console.log(
-        `[Template] ${task.encounterId}: 跳过写入 (新 ${built.templateSourceDurationMs}ms < 旧 ${oldTemplate!.templateSourceDurationMs}ms)`
-      )
-    }
-  }
+  // Encounter template generation moved to processOneSample (Task 6)
 
   // Step 6: 清理临时数据
   await Promise.all([
@@ -710,6 +661,163 @@ export async function aggregateStatistics(task: StatisticsTask, kv: KVNamespace)
   console.log(
     `[Statistics] 汇总完成: encounter ${task.encounterId}, 本批次 ${task.totalFights} 场, 累计样本 ${totalSamples} 条`
   )
+}
+
+interface ProcessOneSampleDeps {
+  db: D1Database
+  kv: KVNamespace
+  /** 默认实现拉 fflogs report+events 并跑 extractFightStats；测试可注入纯函数 */
+  fetchExtracted: (row: SampleQueueRow) => Promise<ExtractedFightData>
+  /** encounterId → 显示名（默认查 ALL_ENCOUNTERS） */
+  lookupEncounterName: (encounterId: number) => string
+}
+
+/** 真实环境用的默认 fetcher 工厂 */
+export function makeDefaultFetchExtracted(client: FFLogsClientV2) {
+  return async (row: SampleQueueRow): Promise<ExtractedFightData> => {
+    const report = await client.getReport({ reportCode: row.report_code })
+    const fight = report.fights.find(f => f.id === row.fight_id)
+    if (!fight) throw new Error(`Fight ${row.fight_id} not found in ${row.report_code}`)
+    const eventsResponse = await client.getEvents({
+      reportCode: row.report_code,
+      start: fight.start_time,
+      end: fight.end_time,
+    })
+    return extractFightStats(report, fight, eventsResponse.events)
+  }
+}
+
+export function defaultLookupEncounterName(encounterId: number): string {
+  return ALL_ENCOUNTERS.find(e => e.id === encounterId)?.name ?? `encounter-${encounterId}`
+}
+
+/**
+ * 单 cron tick 处理一条采样。
+ *
+ * 返回 true = 处理了一条；false = 队列空。
+ */
+export async function processOneSample(deps: ProcessOneSampleDeps): Promise<boolean> {
+  const { db, kv, fetchExtracted, lookupEncounterName } = deps
+
+  const row = await pickNextSample(db)
+  if (!row) {
+    console.log('[Sample-tick] 队列空，跳过')
+    return false
+  }
+
+  const encounterId = row.encounter_id
+  const encounterName = lookupEncounterName(encounterId)
+  console.log(
+    `[Sample-tick] 处理 encounter=${encounterId} report=${row.report_code} fight=${row.fight_id}`
+  )
+
+  const extracted = await fetchExtracted(row)
+
+  // 1) reservoir merge → 写新 samples（无 TTL）
+  const oldSamplesRaw = await kv.get(getSamplesKVKey(encounterId), 'json')
+  const oldSamples = (oldSamplesRaw as EncounterSamples | null) ?? {
+    encounterId,
+    damageByAbility: {},
+    maxHPByJob: {} as Record<Job, number[]>,
+    shieldByAbility: {},
+    healByAbility: {},
+    updatedAt: '',
+  }
+
+  const mergedDamage = mergeRecord(oldSamples.damageByAbility, extracted.damageByAbility)
+  const mergedShield = mergeRecord(oldSamples.shieldByAbility, extracted.shieldByAbility)
+  const mergedHeal = mergeRecord(oldSamples.healByAbility ?? {}, extracted.healByAbility)
+  const mergedMaxHP = mergeRecordStr(
+    oldSamples.maxHPByJob as unknown as Record<string, number[]>,
+    extracted.maxHPByJob as unknown as Record<string, number[]>
+  )
+
+  const newSamples: EncounterSamples = {
+    encounterId,
+    damageByAbility: mergedDamage,
+    maxHPByJob: mergedMaxHP as unknown as Record<Job, number[]>,
+    shieldByAbility: mergedShield,
+    healByAbility: mergedHeal,
+    updatedAt: new Date().toISOString(),
+  }
+  await kv.put(getSamplesKVKey(encounterId), JSON.stringify(newSamples))
+
+  // 2) 读旧 statistics → 累加 abilityFightCount + totalFightsSampled → 重算 percentile → 写
+  const oldStatsRaw = await kv.get(getStatisticsKVKey(encounterId), 'json')
+  const oldStats = oldStatsRaw as EncounterStatistics | null
+  const oldAbilityFightCount = oldStats?.abilityFightCount ?? {}
+  const oldTotalFights = oldStats?.totalFightsSampled ?? 0
+
+  const distinctAbilityIds = new Set<number>(
+    Object.keys(extracted.damageByAbility).map(k => Number(k))
+  )
+  const abilityFightCount: Record<number, number> = { ...oldAbilityFightCount }
+  for (const id of distinctAbilityIds) {
+    abilityFightCount[id] = (abilityFightCount[id] ?? 0) + 1
+  }
+
+  const statistics: EncounterStatistics = {
+    encounterId,
+    encounterName,
+    damageByAbility: calculatePercentiles(mergedDamage),
+    maxHPByJob: calculatePercentiles(mergedMaxHP as unknown as Record<Job, number[]>),
+    shieldByAbility: calculatePercentiles(mergedShield),
+    healByAbility: calculatePercentiles(mergedHeal),
+    critHealByAbility: calculatePercentiles(mergedHeal, 90),
+    critShieldByAbility: calculatePercentiles(mergedShield, 90),
+    sampleSize: Object.values(mergedDamage).reduce((sum, arr) => sum + arr.length, 0),
+    abilityFightCount,
+    totalFightsSampled: oldTotalFights + 1,
+    updatedAt: new Date().toISOString(),
+  }
+  await kv.put(getStatisticsKVKey(encounterId), JSON.stringify(statistics))
+
+  // 3) template：仅当本场更长才覆盖
+  const oldTemplateRaw = await kv.get(getEncounterTemplateKVKey(encounterId), 'json')
+  const oldTemplate = oldTemplateRaw as EncounterTemplate | null
+  const built = buildEncounterTemplate({
+    fightDurationMs: extracted.durationMs,
+    fightEvents: extracted.damageEvents,
+    p50Map: statistics.damageByAbility,
+    oldTemplate,
+  })
+  if (built) {
+    const newTemplate: EncounterTemplate = {
+      encounterId,
+      events: built.events,
+      templateSourceDurationMs: built.templateSourceDurationMs,
+      updatedAt: new Date().toISOString(),
+    }
+    await kv.put(getEncounterTemplateKVKey(encounterId), JSON.stringify(newTemplate))
+    console.log(
+      `[Sample-tick] template 更新: encounter=${encounterId}, duration=${built.templateSourceDurationMs}ms, events=${built.events.length}`
+    )
+  }
+
+  return true
+}
+
+/** 工具：reservoir merge `Record<number, number[]>` */
+function mergeRecord(
+  base: Record<number, number[]>,
+  incoming: Record<number, number[]>
+): Record<number, number[]> {
+  const out: Record<number, number[]> = { ...base }
+  for (const [id, values] of Object.entries(incoming)) {
+    const key = Number(id)
+    out[key] = mergeWithReservoirSampling(out[key] ?? [], values)
+  }
+  return out
+}
+function mergeRecordStr(
+  base: Record<string, number[]>,
+  incoming: Record<string, number[]>
+): Record<string, number[]> {
+  const out: Record<string, number[]> = { ...base }
+  for (const [key, values] of Object.entries(incoming)) {
+    out[key] = mergeWithReservoirSampling(out[key] ?? [], values)
+  }
+  return out
 }
 
 /**

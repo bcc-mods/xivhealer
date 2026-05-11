@@ -44,8 +44,16 @@ export interface EncounterStatistics {
   healByAbility: Record<number, number>
   /** 每个治疗技能的暴击治疗量（p90） */
   critHealByAbility: Record<number, number>
-  /** 采样战斗数量 */
+  /** 采样的样本总条数（damage 各桶长度之和） */
   sampleSize: number
+  /**
+   * 敌方每个 abilityId 在已采样的 fight 中"出现过的场数"
+   * （单场内同 ability 多次出现只计 1 次）
+   * 累计型计数，不参与 reservoir。前端可用 `value / totalFightsSampled` 做出现频率过滤。
+   */
+  abilityFightCount: Record<number, number>
+  /** 累计已采样的 fight 总场数（abilityFightCount 的分母） */
+  totalFightsSampled: number
   /** ISO 8601 时间戳 */
   updatedAt: string
 }

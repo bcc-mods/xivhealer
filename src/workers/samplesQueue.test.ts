@@ -140,4 +140,33 @@ describe('pickNextSample', () => {
     const row = await pickNextSample(db)
     expect(row!.encounter_id).toBe(1002)
   })
+
+  it('两个 encounter 都已采样过时，MAX(sampled_at) 更旧的 encounter 优先', async () => {
+    const db = makeMockD1()
+    // encounter 1001：一条已采样（旧），一条未采样
+    await enqueueRankings(db, 1001, [
+      { reportCode: 'A1', fightID: 1, durationMs: 100_000 },
+      { reportCode: 'A2', fightID: 2, durationMs: 100_000 },
+    ])
+    const first = await pickNextSample(db)
+    expect(first!.encounter_id).toBe(1001)
+    const firstSampledAt = first!.sampled_at!
+
+    // 拖一点时间确保后续 sampled_at 更大；Date.now() 在 mock 里返回当前时间
+    await new Promise(resolve => setTimeout(resolve, 5))
+
+    // encounter 1002：一条已采样（新，覆盖 1001），一条未采样
+    await enqueueRankings(db, 1002, [
+      { reportCode: 'B1', fightID: 1, durationMs: 100_000 },
+      { reportCode: 'B2', fightID: 2, durationMs: 100_000 },
+    ])
+    const second = await pickNextSample(db)
+    expect(second!.encounter_id).toBe(1002)
+    expect(second!.sampled_at!).toBeGreaterThan(firstSampledAt)
+
+    // 第三次 pick：1001 的 MAX(sampled_at) 仍是 firstSampledAt（更旧），1002 的是 second.sampled_at（更新）
+    // → 应优先 1001
+    const third = await pickNextSample(db)
+    expect(third!.encounter_id).toBe(1001)
+  })
 })

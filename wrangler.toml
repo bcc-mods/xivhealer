@@ -4,7 +4,7 @@ compatibility_date = "2024-09-23"
 compatibility_flags = ["nodejs_compat_v2"]
 
 [triggers]
-crons = ["0 */12 * * *"]
+crons = ["0 */12 * * *", "*/10 * * * *"]
 
 [assets]
 directory = "dist/client"
@@ -25,18 +25,8 @@ database_id = "d5c7c316-c36a-42c7-a00e-aa43ceaba3c8"
 queue = "top100-sync-queue"
 binding = "TOP100_SYNC_QUEUE"
 
-[[queues.producers]]
-queue = "statistics-extract-queue"
-binding = "STATISTICS_EXTRACT_QUEUE"
-
 [[queues.consumers]]
 queue = "top100-sync-queue"
-max_batch_size = 1
-max_batch_timeout = 30
-max_retries = 3
-
-[[queues.consumers]]
-queue = "statistics-extract-queue"
 max_batch_size = 1
 max_batch_timeout = 30
 max_retries = 3
@@ -77,18 +67,8 @@ id = "4d48c91437374775b166165a05d56839"
 queue = "top100-sync-queue"
 binding = "TOP100_SYNC_QUEUE"
 
-[[env.production.queues.producers]]
-queue = "statistics-extract-queue"
-binding = "STATISTICS_EXTRACT_QUEUE"
-
 [[env.production.queues.consumers]]
 queue = "top100-sync-queue"
-max_batch_size = 1
-max_batch_timeout = 30
-max_retries = 3
-
-[[env.production.queues.consumers]]
-queue = "statistics-extract-queue"
 max_batch_size = 1
 max_batch_timeout = 30
 max_retries = 3

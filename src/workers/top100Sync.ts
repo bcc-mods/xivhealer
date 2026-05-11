@@ -7,7 +7,7 @@
  */
 
 import { FFLogsClientV2, type RankingEntry } from './fflogsClientV2'
-import { pickNextSample, type SampleQueueRow } from './samplesQueue'
+import { enqueueRankings, pickNextSample, type SampleQueueRow } from './samplesQueue'
 import { ALL_ENCOUNTERS, type RaidEncounter } from '@/data/raidEncounters'
 import type { FFLogsEvent, FFLogsV1Report, FFLogsAbility, FFLogsReport } from '@/types/fflogs'
 import type { EncounterStatistics } from '@/types/mitigation'
@@ -369,71 +369,42 @@ export function calculatePercentiles<T extends number | string>(
 }
 
 /**
- * 为单个遭遇战同步 TOP100 数据到 KV
- * 注意：统计数据提取需要通过队列异步处理
+ * 为单个遭遇战同步 TOP100 数据：
+ * 1. 拉 rankings → 写 top100:encounter:{id}（无 TTL）
+ * 2. 把所有 entries (reportCode, fightID, durationMs) 入 D1 samples_queue（INSERT OR IGNORE）
+ *
+ * 不再随机抽 10 场也不推 statistics queue。统计任务由短间隔 cron 通过 D1 队列驱动。
  */
 export async function syncEncounter(
   encounter: RaidEncounter,
   client: FFLogsClientV2,
   kv: KVNamespace,
-  statisticsQueue?: Queue
+  db: D1Database
 ): Promise<void> {
   console.log(`[TOP100] 同步遭遇战: ${encounter.shortName} (id=${encounter.id})`)
 
-  // 获取排行榜数据
-  const result = await client.getEncounterRankings({
-    encounterId: encounter.id,
-  })
+  const result = await client.getEncounterRankings({ encounterId: encounter.id })
 
   const encounterName = result.encounterName || encounter.name
   const now = new Date().toISOString()
 
-  // 构建 TOP100 数据（立即保存）
   const top100Data: Top100Data = {
     encounterId: encounter.id,
     encounterName,
     entries: result.entries,
     updatedAt: now,
   }
+  await kv.put(getTop100KVKey(encounter.id), JSON.stringify(top100Data))
 
-  // 保存 TOP100 数据
-  await kv.put(getTop100KVKey(encounter.id), JSON.stringify(top100Data), {
-    expirationTtl: 25 * 60 * 60,
-  })
-
-  // 如果提供了队列，推送统计数据提取任务
-  if (statisticsQueue && result.entries.length > 0) {
-    // 随机抽取 10 场战斗
-    const sampledEntries = result.entries
-      .sort(() => Math.random() - 0.5)
-      .slice(0, Math.min(10, result.entries.length))
-
-    // 创建数据统计任务状态
-    const task: StatisticsTask = {
-      encounterId: encounter.id,
-      encounterName,
-      totalFights: sampledEntries.length,
-      fights: sampledEntries.map(e => ({ reportCode: e.reportCode, fightID: e.fightID })),
-      createdAt: now,
-    }
-
-    await kv.put(getStatisticsTaskKVKey(encounter.id), JSON.stringify(task), {
-      expirationTtl: 2 * 60 * 60, // 2 小时过期
-    })
-
-    // 为每场战斗推送一个任务到队列
-    const messages = sampledEntries.map(entry => ({
-      body: {
-        type: 'extract-statistics',
-        encounterId: encounter.id,
-        encounterName,
-        reportCode: entry.reportCode,
-        fightID: entry.fightID,
-      },
+  if (result.entries.length > 0) {
+    const enqueueInputs = result.entries.map(e => ({
+      reportCode: e.reportCode,
+      fightID: e.fightID,
+      // RankingEntry.duration 在 FFLogs v2 schema 中是毫秒
+      durationMs: e.duration ?? 0,
     }))
-
-    await statisticsQueue.sendBatch(messages)
-    console.log(`[TOP100] ${encounter.shortName}: 已推送 ${messages.length} 个统计任务到队列`)
+    const { inserted } = await enqueueRankings(db, encounter.id, enqueueInputs)
+    console.log(`[TOP100] ${encounter.shortName}: 入队 ${inserted}/${enqueueInputs.length} 条`)
   }
 
   console.log(`[TOP100] ${encounter.shortName}: 已同步 ${result.entries.length} 条记录`)
@@ -816,7 +787,8 @@ function mergeRecord<K extends string | number>(
  */
 export async function syncAllTop100(
   client: FFLogsClientV2,
-  kv: KVNamespace
+  kv: KVNamespace,
+  db: D1Database
 ): Promise<{ success: number; failed: number; errors: string[] }> {
   let success = 0
   let failed = 0
@@ -824,7 +796,7 @@ export async function syncAllTop100(
 
   for (const encounter of ALL_ENCOUNTERS) {
     try {
-      await syncEncounter(encounter, client, kv)
+      await syncEncounter(encounter, client, kv, db)
       success++
     } catch (err) {
       failed++

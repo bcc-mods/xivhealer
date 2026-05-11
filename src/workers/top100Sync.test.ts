@@ -8,12 +8,15 @@ import {
   buildEncounterTemplate,
   extractFightStats,
   getEncounterTemplateKVKey,
+  getTop100KVKey,
   handleGetEncounterTemplate,
   processOneSample,
+  syncEncounter,
   type StoredDamageEvent,
   type EncounterTemplate,
   type ExtractedFightData,
   type EncounterSamples,
+  type Top100Data,
 } from './top100Sync'
 import type { SampleQueueRow } from './samplesQueue'
 import { calculatePercentile } from '@/utils/stats'
@@ -21,6 +24,8 @@ import type { DamageEvent } from '@/types/timeline'
 import type { FFLogsV1Report, FFLogsEvent } from '@/types/fflogs'
 import type { EncounterStatistics } from '@/types/mitigation'
 import type { Job } from '@/data/jobs'
+import type { FFLogsClientV2, RankingEntry } from './fflogsClientV2'
+import type { RaidEncounter } from '@/data/raidEncounters'
 
 describe('mergeWithReservoirSampling', () => {
   it('总量未超上限时直接追加', () => {
@@ -610,3 +615,47 @@ function makeMockD1WithRow(row: SampleQueueRow): D1Database {
     }),
   } as unknown as D1Database
 }
+
+describe('syncEncounter (new behavior)', () => {
+  it('写 top100 KV（无 TTL）+ 入队所有 entries 到 D1', async () => {
+    const kv = createMockKV()
+    const inserted: Array<{
+      encounterId: number
+      reportCode: string
+      fightID: number
+      durationMs: number
+    }> = []
+    const db = {
+      batch: async (stmts: Array<{ run: () => Promise<unknown> }>) => {
+        return Promise.all(stmts.map(s => s.run()))
+      },
+      prepare: () => ({
+        bind: (encounterId: number, reportCode: string, fightID: number, durationMs: number) => {
+          inserted.push({ encounterId, reportCode, fightID, durationMs })
+          return { run: async () => ({ meta: { changes: 1 } }) }
+        },
+      }),
+    } as unknown as D1Database
+
+    const fakeClient = {
+      getEncounterRankings: async () => ({
+        encounterName: 'TestE',
+        entries: [
+          { reportCode: 'R1', fightID: 1, duration: 100_000 } as unknown as RankingEntry,
+          { reportCode: 'R2', fightID: 1, duration: 200_000 } as unknown as RankingEntry,
+        ],
+      }),
+    } as unknown as FFLogsClientV2
+
+    const encounter = { id: 1234, name: 'TestE', shortName: 'TE' } as RaidEncounter
+
+    await syncEncounter(encounter, fakeClient, kv, db)
+
+    const top100 = (await kv.get(getTop100KVKey(1234), 'json')) as Top100Data
+    expect(top100.entries).toHaveLength(2)
+    expect(inserted).toHaveLength(2)
+    expect(inserted[0].reportCode).toBe('R1')
+    expect(inserted[0].durationMs).toBe(100_000)
+    expect(inserted[1].durationMs).toBe(200_000)
+  })
+})

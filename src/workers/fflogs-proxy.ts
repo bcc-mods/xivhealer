@@ -161,7 +161,7 @@ export async function handleQueue(batch: MessageBatch, env: Env): Promise<void> 
             message.ack()
             continue
           }
-          await syncEncounter(encounter, client, env.healerbook, env.STATISTICS_EXTRACT_QUEUE)
+          await syncEncounter(encounter, client, env.healerbook, env.healerbook_timelines)
           break
         }
 

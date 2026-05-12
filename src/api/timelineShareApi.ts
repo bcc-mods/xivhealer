@@ -4,6 +4,7 @@
 
 import { HTTPError } from 'ky'
 import { apiClient } from './apiClient'
+import type { ParsedHTTPError } from './apiClient'
 import type { Timeline, Composition } from '@/types/timeline'
 import { parseFromAny, serializeForServer } from '@/utils/timelineFormat'
 
@@ -42,10 +43,7 @@ export async function publishTimeline(timeline: Timeline): Promise<PublishResult
       .post('timelines', { json: { timeline: serializeForServer(timeline) } })
       .json<PublishResult>()
   } catch (err) {
-    if (err instanceof HTTPError) {
-      const body = await err.response.json<{ error?: string }>().catch(() => ({ error: undefined }))
-      throw new Error(body.error ?? `HTTP ${err.response.status}`)
-    }
+    if (err instanceof HTTPError) throw new Error(err.message)
     throw err
   }
 }
@@ -68,17 +66,17 @@ export async function updateTimeline(
     return await apiClient.put(`timelines/${id}`, { json: payload }).json<UpdateResult>()
   } catch (err) {
     if (err instanceof HTTPError && err.response.status === 409) {
-      const body = await err.response.json<{ serverVersion: number; serverUpdatedAt: number }>()
+      const body = (err as ParsedHTTPError).parsedBody as {
+        serverVersion: number
+        serverUpdatedAt: number
+      }
       return {
         type: 'conflict',
         serverVersion: body.serverVersion,
         serverUpdatedAt: body.serverUpdatedAt,
       }
     }
-    if (err instanceof HTTPError) {
-      const body = await err.response.json<{ error?: string }>().catch(() => ({ error: undefined }))
-      throw new Error(body.error ?? `HTTP ${err.response.status}`)
-    }
+    if (err instanceof HTTPError) throw new Error(err.message)
     throw err
   }
 }
@@ -111,10 +109,7 @@ export async function deleteSharedTimeline(id: string): Promise<void> {
   try {
     await apiClient.delete(`timelines/${id}`)
   } catch (err) {
-    if (err instanceof HTTPError) {
-      const body = await err.response.json<{ error?: string }>().catch(() => ({ error: undefined }))
-      throw new Error(body.error ?? `HTTP ${err.response.status}`)
-    }
+    if (err instanceof HTTPError) throw new Error(err.message)
     throw err
   }
 }

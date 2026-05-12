@@ -15,6 +15,7 @@ import { track } from '@/utils/analytics'
 import { apiClient } from '@/api/apiClient'
 import { parseFromAny } from '@/utils/timelineFormat'
 import { generateId } from '@/utils/id'
+import { parseApiError } from '@/api/parseApiError'
 
 interface ImportFFLogsDialogProps {
   open: boolean
@@ -99,8 +100,8 @@ export default function ImportFFLogsDialog({
       })
 
       if (!response.ok) {
-        const body = (await response.json()) as { error?: string }
-        throw new Error(body.error || `HTTP ${response.status}`)
+        const body = (await response.json().catch(() => null)) as unknown
+        throw new Error(parseApiError(body, response.status))
       }
 
       const raw = await response.json()

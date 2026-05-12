@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
 import { useAuthStore } from '@/store/authStore'
 import { track } from '@/utils/analytics'
+import { parseApiError } from '@/api/parseApiError'
 
 const AUTH_CALLBACK_URL = '/api/auth/callback'
 
@@ -54,14 +55,8 @@ export default function CallbackPage() {
     })
       .then(async res => {
         if (!res.ok) {
-          let message = `HTTP ${res.status}`
-          try {
-            const err = (await res.json()) as { error?: string }
-            if (err.error) message = err.error
-          } catch {
-            // response was not JSON, use status code message
-          }
-          throw new Error(message)
+          const body = (await res.json().catch(() => null)) as unknown
+          throw new Error(parseApiError(body, res.status))
         }
         return res.json() as Promise<{
           access_token: string

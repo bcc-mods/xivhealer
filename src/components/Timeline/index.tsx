@@ -190,7 +190,8 @@ export default function TimelineCanvas({ width, height }: TimelineCanvasProps) {
     })
   }, [timeline, actionMap, statusTimelineByPlayer, simulateOnRemove])
 
-  const [draggingId, setDraggingId] = useState<string | null>(null)
+  const draggingId = useUIStore(s => s.draggingId)
+  const setDraggingId = useUIStore(s => s.setDraggingId)
 
   // drop 落点提交后 castEvents 变新引用 → 自动清空 draggingId。
   // 放在 useEffect 而不是 onDragEnd 里，是为了避开 Konva 释放瞬间的状态收束：
@@ -1388,8 +1389,6 @@ export default function TimelineCanvas({ width, height }: TimelineCanvasProps) {
                 displayActionOverrides={displayActionOverrides}
                 engine={engine}
                 invalidCastEventMap={invalidCastEventMap}
-                draggingId={draggingId}
-                setDraggingId={setDraggingId}
                 zoomLevel={zoomLevel}
                 timelineWidth={timelineWidth}
                 trackHeight={skillTrackHeight}

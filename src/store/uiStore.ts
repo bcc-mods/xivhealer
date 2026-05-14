@@ -28,6 +28,9 @@ interface UIState {
    * 但 calculator 仍然算 HP 池演化，便于未来"主时间轴 HP 曲线 overlay" 按需消费。
    */
   enableHpSimulation: boolean
+  /** 当前正在拖拽的 castEvent.id；非拖拽态为 null。
+   *  ephemeral 状态，从 persist 排除。 */
+  draggingId: string | null
 
   // Actions
   /** 切换网格显示 */
@@ -48,6 +51,8 @@ interface UIState {
   toggleShowOriginalDamage: () => void
   /** 切换 HP 模拟显示 */
   toggleEnableHpSimulation: () => void
+  /** 设置当前拖拽的 castEvent.id；停止拖拽传 null */
+  setDraggingId: (id: string | null) => void
 }
 
 function applyTheme(theme: 'light' | 'dark') {
@@ -76,6 +81,7 @@ export const useUIStore = create<UIState>()(
       showActualDamage: true,
       showOriginalDamage: false,
       enableHpSimulation: true,
+      draggingId: null,
 
       toggleGrid: () =>
         set(state => ({
@@ -121,11 +127,13 @@ export const useUIStore = create<UIState>()(
         set(state => ({
           enableHpSimulation: !state.enableHpSimulation,
         })),
+
+      setDraggingId: id => set({ draggingId: id }),
     }),
     {
       name: 'ui-store',
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      partialize: ({ theme, ...rest }) => rest,
+      partialize: ({ theme, draggingId, ...rest }) => rest,
     }
   )
 )

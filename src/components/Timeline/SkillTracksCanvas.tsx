@@ -18,6 +18,7 @@ import { subtractIntervals, sortIntervals, mergeOverlapping } from '@/utils/plac
 import { effectiveTrackGroup } from '@/types/mitigation'
 import { useFilteredTimelineView } from '@/hooks/useFilteredTimelineView'
 import { useCastEffectiveEnd } from '@/contexts/DamageCalculationContext'
+import { useUIStore } from '@/store/uiStore'
 
 interface SkillTracksCanvasProps {
   timeline: Timeline
@@ -27,8 +28,6 @@ interface SkillTracksCanvasProps {
   actionMap?: Map<number, MitigationAction>
   engine?: PlacementEngine | null
   invalidCastEventMap?: Map<string, InvalidCastEventSummary>
-  draggingId?: string | null
-  setDraggingId?: (id: string | null) => void
   displayActionOverrides: Map<string, MitigationAction>
   zoomLevel: number
   timelineWidth: number
@@ -81,8 +80,6 @@ export default function SkillTracksCanvas({
   actionMap,
   engine,
   invalidCastEventMap,
-  draggingId,
-  setDraggingId,
   displayActionOverrides,
   zoomLevel,
   timelineWidth,
@@ -115,6 +112,8 @@ export default function SkillTracksCanvas({
   onAnnotationDragStart,
   onAnnotationDragEnd,
 }: SkillTracksCanvasProps) {
+  const draggingId = useUIStore(s => s.draggingId)
+  const setDraggingId = useUIStore(s => s.setDraggingId)
   const colors = useCanvasColors()
   const skillTracksHeight = skillTracks.length * trackHeight
   const { filteredDamageEvents } = useFilteredTimelineView()
@@ -604,7 +603,7 @@ export default function SkillTracksCanvas({
               scrollLeft={scrollLeft}
               scrollTop={scrollTop}
               onSelect={() => onSelectCastEvent(castEvent.id)}
-              onDragStart={() => setDraggingId?.(castEvent.id)}
+              onDragStart={() => setDraggingId(castEvent.id)}
               onDragEnd={x => onUpdateCastEvent(castEvent.id, x)}
               onContextMenu={e => {
                 e.evt.preventDefault()

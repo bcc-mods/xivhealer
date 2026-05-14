@@ -6,7 +6,7 @@ import { useState } from 'react'
 import { DAMAGE_EVENT_NAME_MAX_LENGTH } from '@/constants/limits'
 import { useTimelineStore } from '@/store/timelineStore'
 import { useUIStore } from '@/store/uiStore'
-import { useDamageCalculation } from '@/hooks/useDamageCalculation'
+import { useDamageCalculationResults } from '@/contexts/DamageCalculationContext'
 import { useEditorReadOnly } from '@/hooks/useEditorReadOnly'
 import { getStatusById } from '@/utils/statusRegistry'
 import { getStatusIconUrl, getStatusName } from '@/utils/statusIconUtils'
@@ -57,7 +57,7 @@ export default function PropertyPanel() {
   const [isTiled, setIsTiled] = useState(false)
 
   // 使用新的伤害计算 Hook（基于状态）
-  const { results: eventResults } = useDamageCalculation(timeline)
+  const eventResults = useDamageCalculationResults()
 
   // 显示伤害事件属性（event 可能不存在；hooks 必须在 early return 前声明）
   const event = timeline?.damageEvents.find(e => e.id === selectedEventId)

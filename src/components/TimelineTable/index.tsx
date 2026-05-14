@@ -21,7 +21,7 @@ import { useFilterStore } from '@/store/filterStore'
 import { useEditorReadOnly } from '@/hooks/useEditorReadOnly'
 import {
   useDamageCalculationResults,
-  useDamageCalculationSimulate,
+  useRemovalTimelinesByExcludeId,
   useStatusTimelineByPlayer,
 } from '@/contexts/DamageCalculationContext'
 import { createPlacementEngine } from '@/utils/placement/engine'
@@ -53,7 +53,7 @@ export default function TimelineTableView() {
   const showActualDamage = useUIStore(s => s.showActualDamage)
   const skillTracks = useSkillTracks()
   const calculationResults = useDamageCalculationResults()
-  const simulateOnRemove = useDamageCalculationSimulate()
+  const removalTimelinesByExcludeId = useRemovalTimelinesByExcludeId()
   const statusTimelineByPlayer = useStatusTimelineByPlayer()
   const isReadOnly = useEditorReadOnly()
   const { filteredDamageEvents, filteredCastEvents } = useFilteredTimelineView()
@@ -72,9 +72,9 @@ export default function TimelineTableView() {
       castEvents: timeline.castEvents,
       actions: actionsById,
       statusTimelineByPlayer,
-      simulateOnRemove: simulateOnRemove ?? undefined,
+      removalTimelinesByExcludeId,
     })
-  }, [timeline, actionsById, statusTimelineByPlayer, simulateOnRemove])
+  }, [timeline, actionsById, statusTimelineByPlayer, removalTimelinesByExcludeId])
 
   const litCellsByEvent = useMemo(() => {
     if (!timeline) return new Map<string, Set<string>>()

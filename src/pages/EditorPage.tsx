@@ -103,7 +103,13 @@ export default function EditorPage() {
   const [canvasSize, setCanvasSize] = useState({ width: 800, height: 600 })
 
   useEncounterStatistics(timeline?.encounter?.id)
-  const calculationResults = useDamageCalculation(timeline)
+  const selectedCastEventId = useTimelineStore(s => s.selectedCastEventId)
+  const draggingId = useUIStore(s => s.draggingId)
+  const extraExcludeIds = useMemo(
+    () => [selectedCastEventId, draggingId].filter((id): id is string => !!id),
+    [selectedCastEventId, draggingId]
+  )
+  const calculationResults = useDamageCalculation(timeline, { extraExcludeIds })
   const isReadOnly = useEditorReadOnly()
 
   // 跨视图的变体自动重分类：任何状态变化（拖 37014、添加/删除 cast、等）都可能让

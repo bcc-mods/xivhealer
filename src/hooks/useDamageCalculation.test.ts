@@ -1,15 +1,78 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi } from 'vitest'
-import { renderHook } from '@testing-library/react'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { renderHook, act } from '@testing-library/react'
 import * as registry from '@/utils/statusRegistry'
-import { useDamageCalculation } from './useDamageCalculation'
+import { useDamageCalculation, __setWorkerClientForTesting } from './useDamageCalculation'
 import { useTimelineStore } from '@/store/timelineStore'
+import { CalculatorWorkerClient } from '@/web-workers/calculator/client'
+import type {
+  SimulateBundle,
+  SimulateRequest,
+  SimulateResponse,
+  StatusTimelineByPlayer,
+} from '@/web-workers/calculator/types'
+import { MitigationCalculator } from '@/utils/mitigationCalculator'
 import type { MitigationStatusMetadata } from '@/types/status'
 import type { Timeline } from '@/types/timeline'
 import { MITIGATION_DATA } from '@/data/mitigationActions'
 import { createHealExecutor } from '@/executors/createHealExecutor'
 import { createRegenExecutor } from '@/executors/createRegenExecutor'
 import { regenStatusExecutor } from '@/executors/regenStatusExecutor'
+
+// FakeWorker：用真实 MitigationCalculator 在主线程同步算，下一个 microtask 回包。
+// 这样所有依赖具体计算结果的断言（HP 演化、healSnapshots 反向溯源等）都能保持原有语义；
+// 唯一变化是 hook 现在通过 Promise.resolve().then(...) 异步 setState，测试需要 flush microtask。
+class FakeWorker implements Partial<Worker> {
+  onmessage: ((e: MessageEvent<SimulateResponse>) => void) | null = null
+  onerror: ((e: ErrorEvent) => void) | null = null
+  postedMessages: SimulateRequest[] = []
+  postMessage(msg: SimulateRequest) {
+    this.postedMessages.push(msg)
+    Promise.resolve().then(() => {
+      const calculator = new MitigationCalculator()
+      try {
+        const main = calculator.simulate(msg.input)
+        const removalTimelinesByExcludeId: Map<string, StatusTimelineByPlayer> = new Map()
+        for (const id of msg.extraExcludeIds) {
+          const out = calculator.simulate({
+            ...msg.input,
+            castEvents: msg.input.castEvents.filter(ev => ev.id !== id),
+            skipHpPipeline: true,
+          })
+          removalTimelinesByExcludeId.set(id, out.statusTimelineByPlayer)
+        }
+        const bundle: SimulateBundle = { main, removalTimelinesByExcludeId }
+        this.onmessage?.(
+          new MessageEvent('message', {
+            data: { requestId: msg.requestId, ok: true, bundle },
+          })
+        )
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err)
+        this.onmessage?.(
+          new MessageEvent('message', {
+            data: { requestId: msg.requestId, ok: false, error: { message } },
+          })
+        )
+      }
+    })
+  }
+  terminate() {}
+}
+
+// 等待 worker microtask + React setState 落地
+async function flushWorker() {
+  await act(async () => {
+    await Promise.resolve()
+    await Promise.resolve()
+  })
+}
+
+beforeEach(() => {
+  __setWorkerClientForTesting(
+    new CalculatorWorkerClient(() => new FakeWorker() as unknown as Worker)
+  )
+})
 
 function fakeMeta(
   id: number,
@@ -49,7 +112,7 @@ function makeTimeline(events: Array<{ time: number }>): Timeline {
 }
 
 describe('useDamageCalculation: onExpire / onTick 钩子', () => {
-  it('状态在事件之间过期时，onExpire 被调用', () => {
+  it('状态在事件之间过期时，onExpire 被调用', async () => {
     const FAKE_ID = 999800
     const onExpire = vi.fn().mockImplementation(ctx => ctx.partyState)
 
@@ -75,7 +138,9 @@ describe('useDamageCalculation: onExpire / onTick 钩子', () => {
         statistics: null,
       })
 
-      renderHook(() => useDamageCalculation(makeTimeline([{ time: 3 }, { time: 10 }])))
+      const tl = makeTimeline([{ time: 3 }, { time: 10 }])
+      renderHook(() => useDamageCalculation(tl))
+      await flushWorker()
 
       expect(onExpire).toHaveBeenCalledTimes(1)
       expect(onExpire.mock.calls[0][0].status.instanceId).toBe('will-expire')
@@ -84,7 +149,7 @@ describe('useDamageCalculation: onExpire / onTick 钩子', () => {
     }
   })
 
-  it('活跃状态在全局 3s 网格的整秒点触发 onTick', () => {
+  it('活跃状态在全局 3s 网格的整秒点触发 onTick', async () => {
     const FAKE_ID = 999801
     const onTick = vi.fn().mockImplementation(ctx => ctx.partyState)
 
@@ -111,7 +176,9 @@ describe('useDamageCalculation: onExpire / onTick 钩子', () => {
       })
 
       // 事件在 t=10；推进时间经过 tick 点 t=3,6,9
-      renderHook(() => useDamageCalculation(makeTimeline([{ time: 10 }])))
+      const tl = makeTimeline([{ time: 10 }])
+      renderHook(() => useDamageCalculation(tl))
+      await flushWorker()
 
       const ticksCalled = onTick.mock.calls.map(c => c[0].tickTime)
       expect(ticksCalled).toEqual([3, 6, 9])
@@ -120,7 +187,7 @@ describe('useDamageCalculation: onExpire / onTick 钩子', () => {
     }
   })
 
-  it('活跃状态的 performance.maxHP 会把 referenceMaxHP 乘上', () => {
+  it('活跃状态的 performance.maxHP 会把 referenceMaxHP 乘上', async () => {
     const FAKE_ID = 999803
     const spy = vi.spyOn(registry, 'getStatusById').mockImplementation(id => {
       if (id === FAKE_ID) {
@@ -150,7 +217,9 @@ describe('useDamageCalculation: onExpire / onTick 钩子', () => {
         timeline: null,
       })
 
-      const { result } = renderHook(() => useDamageCalculation(makeTimeline([{ time: 5 }])))
+      const tl = makeTimeline([{ time: 5 }])
+      const { result } = renderHook(() => useDamageCalculation(tl))
+      await flushWorker()
       const e0 = result.current.results.get('e0')
       expect(e0?.referenceMaxHP).toBe(Math.round(100000 * 1.2))
     } finally {
@@ -158,7 +227,7 @@ describe('useDamageCalculation: onExpire / onTick 钩子', () => {
     }
   })
 
-  it('非坦克事件不叠加 isTankOnly 的 maxHP', () => {
+  it('非坦克事件不叠加 isTankOnly 的 maxHP', async () => {
     const FAKE_ID = 999804
     const spy = vi.spyOn(registry, 'getStatusById').mockImplementation(id => {
       if (id === FAKE_ID) {
@@ -191,6 +260,7 @@ describe('useDamageCalculation: onExpire / onTick 钩子', () => {
       const tl = makeTimeline([{ time: 5 }])
       tl.damageEvents[0].type = 'aoe'
       const { result } = renderHook(() => useDamageCalculation(tl))
+      await flushWorker()
       const e0 = result.current.results.get('e0')
       expect(e0?.referenceMaxHP).toBe(100000)
     } finally {
@@ -198,7 +268,7 @@ describe('useDamageCalculation: onExpire / onTick 钩子', () => {
     }
   })
 
-  it('状态未覆盖的 tick 点不触发 onTick', () => {
+  it('状态未覆盖的 tick 点不触发 onTick', async () => {
     const FAKE_ID = 999802
     const onTick = vi.fn()
 
@@ -224,7 +294,9 @@ describe('useDamageCalculation: onExpire / onTick 钩子', () => {
         statistics: null,
       })
 
-      renderHook(() => useDamageCalculation(makeTimeline([{ time: 9 }])))
+      const tl = makeTimeline([{ time: 9 }])
+      renderHook(() => useDamageCalculation(tl))
+      await flushWorker()
 
       expect(onTick).not.toHaveBeenCalled()
     } finally {
@@ -234,7 +306,7 @@ describe('useDamageCalculation: onExpire / onTick 钩子', () => {
 })
 
 describe('HP 模拟端到端（partial 段 + cast 治疗 + HoT）', () => {
-  it('partial 段 + cast 一次性治疗 + HoT 演化正确，healSnapshots 反向溯源 castEventId', () => {
+  it('partial 段 + cast 一次性治疗 + HoT 演化正确，healSnapshots 反向溯源 castEventId', async () => {
     const HEAL_ACTION_ID = 999801
     const HOT_ACTION_ID = 999802
     const HOT_STATUS_ID = 999803
@@ -336,6 +408,7 @@ describe('HP 模拟端到端（partial 段 + cast 治疗 + HoT）', () => {
       })
 
       const { result } = renderHook(() => useDamageCalculation(timeline))
+      await flushWorker()
 
       // p1 (t=10): hp 100k（cast 在 t=5 时刻 hp 满血、+10k overheal）→ partial 20k → 80k
       expect(result.current.results.get('p1')!.hpSimulation!.hpAfter).toBe(80000)

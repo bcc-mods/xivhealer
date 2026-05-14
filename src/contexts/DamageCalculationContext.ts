@@ -8,7 +8,8 @@ const emptyContext: DamageCalculationResult = {
   castEffectiveEndByCastEventId: new Map(),
   healSnapshots: [],
   hpTimeline: [],
-  simulateOnRemove: null,
+  removalTimelinesByExcludeId: new Map(),
+  isPending: false,
 }
 
 export const DamageCalculationContext = createContext<DamageCalculationResult>(emptyContext)
@@ -25,10 +26,14 @@ export function useCastEffectiveEnd(): Map<string, number> {
   return useContext(DamageCalculationContext).castEffectiveEndByCastEventId
 }
 
-export function useDamageCalculationSimulate(): DamageCalculationResult['simulateOnRemove'] {
-  return useContext(DamageCalculationContext).simulateOnRemove
+export function useRemovalTimelinesByExcludeId(): Map<string, StatusTimelineByPlayer> {
+  return useContext(DamageCalculationContext).removalTimelinesByExcludeId
 }
 
 export function useHpTimeline(): DamageCalculationResult['hpTimeline'] {
   return useContext(DamageCalculationContext).hpTimeline
+}
+
+export function useDamageCalculationPending(): boolean {
+  return useContext(DamageCalculationContext).isPending
 }

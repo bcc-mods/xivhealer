@@ -21,12 +21,26 @@ function makeEngine(castEvents: CastEvent[]) {
     } as DamageEvent,
   ]
   const full = calc.simulate({ castEvents, damageEvents, initialState })
+  // 预算每个 cast 的"假装它不存在"的 status timeline，等价于原 simulateOnRemove
+  // 回调按需重跑的结果。worker 路径在生产环境会一次性返回这张表。
+  const removalTimelinesByExcludeId = new Map<
+    string,
+    ReturnType<typeof calc.simulate>['statusTimelineByPlayer']
+  >()
+  for (const ce of castEvents) {
+    const result = calc.simulate({
+      castEvents: castEvents.filter(e => e.id !== ce.id),
+      damageEvents,
+      initialState,
+      skipHpPipeline: true,
+    })
+    removalTimelinesByExcludeId.set(ce.id, result.statusTimelineByPlayer)
+  }
   return createPlacementEngine({
     castEvents,
     actions,
     statusTimelineByPlayer: full.statusTimelineByPlayer,
-    simulateOnRemove: evs =>
-      calc.simulate({ castEvents: evs, damageEvents, initialState, skipHpPipeline: true }),
+    removalTimelinesByExcludeId,
   })
 }
 

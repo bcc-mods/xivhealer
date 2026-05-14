@@ -18,7 +18,7 @@ import { useHotkeys } from 'react-hotkeys-hook'
 import { toast } from 'sonner'
 import {
   useDamageCalculationResults,
-  useDamageCalculationSimulate,
+  useRemovalTimelinesByExcludeId,
   useHpTimeline,
   useStatusTimelineByPlayer,
 } from '@/contexts/DamageCalculationContext'
@@ -174,7 +174,7 @@ export default function TimelineCanvas({ width, height }: TimelineCanvasProps) {
   const { isDamageTrackCollapsed, toggleDamageTrackCollapsed } = useUIStore()
   const enableHpSimulation = useUIStore(s => s.enableHpSimulation)
   const calculationResults = useDamageCalculationResults()
-  const simulateOnRemove = useDamageCalculationSimulate()
+  const removalTimelinesByExcludeId = useRemovalTimelinesByExcludeId()
   const statusTimelineByPlayer = useStatusTimelineByPlayer()
   const hpTimeline = useHpTimeline()
 
@@ -186,9 +186,9 @@ export default function TimelineCanvas({ width, height }: TimelineCanvasProps) {
       castEvents: timeline.castEvents,
       actions: actionMap,
       statusTimelineByPlayer,
-      simulateOnRemove: simulateOnRemove ?? undefined,
+      removalTimelinesByExcludeId,
     })
-  }, [timeline, actionMap, statusTimelineByPlayer, simulateOnRemove])
+  }, [timeline, actionMap, statusTimelineByPlayer, removalTimelinesByExcludeId])
 
   const draggingId = useUIStore(s => s.draggingId)
   const setDraggingId = useUIStore(s => s.setDraggingId)

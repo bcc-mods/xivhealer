@@ -249,11 +249,11 @@ describe('createPlacementEngine — shadow / unique / findInvalid', () => {
 })
 
 describe('createPlacementEngine — findInvalidCastEvents 拖拽预览语义', () => {
-  it('removeCastEventId 给定时用 simulateOnRemove 重跑后的 timeline 评估剩余 cast', () => {
+  it('removeCastEventId 给定时用 removalTimelinesByExcludeId 预算的 timeline 评估剩余 cast', () => {
     // 模拟：节制 16536 在 t=10 附加 status 1873（duration 25），→ default 时是 [10, 20)
     //       因为神爱抚 37011 在 t=20 consume 1873。
-    //       简化为：simulateOnRemove 拿到 filtered（不含 37011）后返回 [10, 35)，
-    //       让 grace 的 placement 评估时看到延长后的 buff 仍在 t=20。
+    //       简化为：removalTimelinesByExcludeId['cgrace'] 预算"删掉 grace 后"的 timeline
+    //       = [10, 35)，让 grace 的 placement 评估时看到延长后的 buff 仍在 t=25。
     const defaultTimeline: StatusTimelineByPlayer = new Map([
       [
         10,
@@ -300,7 +300,7 @@ describe('createPlacementEngine — findInvalidCastEvents 拖拽预览语义', (
     })
     const castEvents: CastEvent[] = [
       { id: 'c16536', actionId: 16536, playerId: 10, timestamp: 10 } as unknown as CastEvent,
-      // grace 在 t=25 — default 时该位置 placement 失效（buff 仅到 20），simulateOnRemove
+      // grace 在 t=25 — default 时该位置 placement 失效（buff 仅到 20），预算 timeline
       // 把 buff 延到 35 后 placement 应合法。两条路径在 findInvalidCastEvents 的差异。
       { id: 'cgrace', actionId: 37011, playerId: 10, timestamp: 25 } as unknown as CastEvent,
     ]
@@ -311,7 +311,7 @@ describe('createPlacementEngine — findInvalidCastEvents 拖拽预览语义', (
         [37011, grace],
       ]),
       statusTimelineByPlayer: defaultTimeline,
-      simulateOnRemove: () => ({ statusTimelineByPlayer: removalTimeline }),
+      removalTimelinesByExcludeId: new Map([['cgrace', removalTimeline]]),
     })
 
     // 默认 findInvalidCastEvents：cgrace placement_lost（buff 仅到 20，t=25 越界）
@@ -377,37 +377,95 @@ describe('createPlacementEngine — findInvalidCastEvents 拖拽预览语义', (
     expect(engine.pickUniqueMember(7439, 10, 60, 'self')?.id).toBe(7439)
   })
 
-  it('excludeId 查询走 simulateOnRemove 派生 placement timeline，且按 excludeId 缓存', () => {
+  it('excludeId 查询命中 removalTimelinesByExcludeId 时使用预算 timeline；未命中降级为过滤', () => {
     // 常规 excludeId 查询（getValidIntervals / canPlaceCastEvent / pickUniqueMember /
-    // computeTrackShadow）现在都靠 simulateOnRemove 重跑 placement timeline，等价于
-    // "假装该 cast 不存在"——简单 sourceCastEventId 过滤无法还原被消费型 cast（如 AST
-    // 星体爆轰）截断的下游 buff 自然时长，shadow 会少给出可拖区。缓存按 excludeId 分桶，
-    // 同 excludeId 的多次查询命中 cache 不重跑 simulate。
-    let calls = 0
-    const action = makeAction({ id: 1 })
+    // computeTrackShadow / findInvalidCastEvents(removeId)）优先取 worker 路径预算好的
+    // removalTimelinesByExcludeId.get(excludeId)——能还原被消费型 cast 截断的下游 buff
+    // 自然时长。未提供该 excludeId 时降级为 sourceCastEventId 过滤（仅适合 attach-only
+    // cast）。
+    const BUFF = 9999
+    // 预算 timeline 里有一个 BUFF [0, 100)，主路径 timeline 完全为空。
+    const removalTimeline: StatusTimelineByPlayer = new Map([
+      [
+        10,
+        new Map([
+          [
+            BUFF,
+            [
+              {
+                from: 0,
+                to: 100,
+                stacks: 1,
+                sourcePlayerId: 10,
+                sourceCastEventId: 'other',
+              } as StatusInterval,
+            ],
+          ],
+        ]),
+      ],
+    ])
+    // placement = whileStatus(BUFF)：主路径 timeline 没 BUFF → 全段非法；
+    // 预算 timeline 有 BUFF [0,100) → 该段合法。借此区分两条路径。
+    const action = makeAction({
+      id: 1,
+      cooldown: 1,
+      placement: whileStatus(BUFF),
+    })
     const engine = createPlacementEngine({
       castEvents: [{ id: 'c1', actionId: 1, playerId: 10, timestamp: 0 } as unknown as CastEvent],
       actions: new Map([[1, action]]),
       statusTimelineByPlayer: new Map(),
-      simulateOnRemove: () => {
-        calls++
-        return { statusTimelineByPlayer: new Map() }
-      },
+      removalTimelinesByExcludeId: new Map([['c1', removalTimeline]]),
     })
-    // 不带 excludeId：直接共享 defaultTimeline，0 次 simulate
-    engine.getValidIntervals(action, 10)
-    engine.canPlaceCastEvent(action, 10, 0)
-    engine.findInvalidCastEvents()
-    expect(calls).toBe(0)
-    // 带 excludeId='c1'：触发一次 simulateOnRemove，后续同 excludeId 复用缓存
-    engine.getValidIntervals(action, 10, 'c1')
-    expect(calls).toBe(1)
-    engine.canPlaceCastEvent(action, 10, 0, 'c1')
-    engine.computeTrackShadow(1, 10, 'c1')
-    expect(calls).toBe(1)
-    // findInvalidCastEvents(removeId) 走自己的重跑路径（不共享 timelineExcluding 缓存），
-    // 重跑一次。
-    engine.findInvalidCastEvents('c1')
-    expect(calls).toBe(2)
+    // 不带 excludeId：用 defaultTimeline（空），whileStatus(BUFF) 无法满足 → 非法
+    expect(engine.canPlaceCastEvent(action, 10, 50).ok).toBe(false)
+    // 带 excludeId='c1'：命中 Map，使用 removalTimeline → t=50 在 BUFF [0,100) 内 → 合法
+    expect(engine.canPlaceCastEvent(action, 10, 50, 'c1').ok).toBe(true)
+    // getValidIntervals(_, _, 'c1') 应反映预算 timeline 的合法窗口
+    const intervals = engine.getValidIntervals(action, 10, 'c1')
+    expect(intervals.some(i => i.from <= 50 && 50 <= i.to)).toBe(true)
+    // findInvalidCastEvents('c1') 也走 timelineExcluding('c1')，命中预算 timeline
+    // 把 c1 自己拿掉后没有剩余 cast → 结果为空
+    expect(engine.findInvalidCastEvents('c1')).toEqual([])
+  })
+
+  it('removalTimelinesByExcludeId 未命中时降级为 sourceCastEventId 过滤', () => {
+    // 不提供 Map（或 Map 缺该 excludeId）时，timelineExcluding 走过滤兜底：
+    // 主路径 timeline 中 sourceCastEventId === excludeId 的 interval 被剔除。
+    const BUFF = 7777
+    const defaultTimeline: StatusTimelineByPlayer = new Map([
+      [
+        10,
+        new Map([
+          [
+            BUFF,
+            [
+              {
+                from: 0,
+                to: 100,
+                stacks: 1,
+                sourcePlayerId: 10,
+                sourceCastEventId: 'c1',
+              } as StatusInterval,
+            ],
+          ],
+        ]),
+      ],
+    ])
+    const action = makeAction({
+      id: 1,
+      cooldown: 1,
+      placement: whileStatus(BUFF),
+    })
+    const engine = createPlacementEngine({
+      castEvents: [{ id: 'c1', actionId: 1, playerId: 10, timestamp: 0 } as unknown as CastEvent],
+      actions: new Map([[1, action]]),
+      statusTimelineByPlayer: defaultTimeline,
+      // 不传 removalTimelinesByExcludeId
+    })
+    // 不带 excludeId：BUFF 全段在 → t=50 合法
+    expect(engine.canPlaceCastEvent(action, 10, 50).ok).toBe(true)
+    // 带 excludeId='c1'：过滤掉 sourceCastEventId='c1' 的 BUFF interval → 全段非法
+    expect(engine.canPlaceCastEvent(action, 10, 50, 'c1').ok).toBe(false)
   })
 })

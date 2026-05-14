@@ -21,51 +21,48 @@ import { computeCdBarEnd } from '@/utils/resource/cdBar'
 export interface PlacementEngineInput {
   castEvents: CastEvent[]
   actions: Map<number, MitigationAction>
-  /**
-   * 主路径预算好的 status timeline。`excludeId` 缺省时所有查询直接共享这一份。
-   */
+  /** 主路径 status timeline。`excludeId` 缺省时所有查询直接共享这一份。 */
   statusTimelineByPlayer: StatusTimelineByPlayer
   /**
-   * "假装该 cast 不存在"重跑 simulate 的回调；engine 在所有带 `excludeId` 的查询
-   * （getValidIntervals / canPlaceCastEvent / pickUniqueMember / computeTrackShadow /
-   * findInvalidCastEvents(removeCastEventId)）里都用它派生 placement timeline，缓存
-   * 在 engine 实例生命周期内（每帧重建）。
+   * 预算好的"假装该 cast 不存在"的 status timeline 表。worker 路径下由
+   * `useDamageCalculation` 一次性返回。带 excludeId 的查询命中即用；未命中
+   * 降级为"按 sourceCastEventId 过滤主路径 timeline"——降级语义与原 simulateOnRemove
+   * 缺省时一致：只适合"该 cast 只 attach、不消费 / 不打断"的场景，消费型 cast 的
+   * 截断效果不可还原（详见 timelineExcluding 注释）。
    *
-   * 必须用重跑而不是按 `sourceCastEventId === excludeId` 过滤——单纯过滤只能拿掉 cast
-   * 自己 attach 的 status，但**消费**型 cast（AST 星体爆轰 8324 在 buff 期间 cast →
-   * simulator 把 1224 的 `to` 收束到 cast 时刻）只有重跑 simulator 才能还原被它截断的
-   * 下游 buff 自然时长。已知场景：
-   *   - 8324 在 1224 期间放置后，shadow 把 `[t_cast, 1224.endTime)` 错误标为非法 →
-   *     cast 只能向更早时刻拖、不能在 7439 持续时间内自由移动。
-   *   - 7439 cast 自身的 1224 在 placement timeline 里 → `not(whileStatus(1224))` 的
-   *     自禁 placement 在 buff 起点恒非法 → 自动重分类反复在 7439 ↔ 8324 之间翻
-   *     actionId 触发 React 死循环（详见 engine.test.ts 里的回归用例）。
-   *
-   * 缺省时降级为 `sourceCastEventId === excludeId` 过滤——单元测试 / 没接 calculator
-   * 的最小 engine 用例的兜底；正式 UI 路径必传，否则消费型 cast 的 shadow 不正确。
+   * 不传 = engine 内所有带 excludeId 查询走过滤降级。EditorPage 自动重分类即此路径。
    */
-  simulateOnRemove?: (castEvents: CastEvent[]) => { statusTimelineByPlayer: StatusTimelineByPlayer }
+  removalTimelinesByExcludeId?: Map<string, StatusTimelineByPlayer>
 }
 
 export function createPlacementEngine(input: PlacementEngineInput): PlacementEngine {
-  const { castEvents, actions, statusTimelineByPlayer: defaultTimeline, simulateOnRemove } = input
+  const {
+    castEvents,
+    actions,
+    statusTimelineByPlayer: defaultTimeline,
+    removalTimelinesByExcludeId,
+  } = input
   const resourceEventsByKey = deriveResourceEvents(castEvents, actions)
 
   function effectiveCastEvents(excludeId?: string): CastEvent[] {
     return excludeId ? castEvents.filter(e => e.id !== excludeId) : castEvents
   }
 
-  // "假装该 cast 不存在"的 placement timeline 缓存。优先 simulateOnRemove 重跑（能还原被
-  // 消费型 cast 截断的 buff 自然时长），降级为 sourceCastEventId 过滤（仅适合"该 cast 只
-  // attach、不消费 / 不打断"的场景）。engine 每帧重建，缓存生命周期 = engine 生命周期。
+  // "假装该 cast 不存在"的 placement timeline 缓存。优先用 worker 路径预算好的
+  // removalTimelinesByExcludeId（能还原被消费型 cast 截断的 buff 自然时长），未命中时
+  // 降级为 sourceCastEventId 过滤（仅适合"该 cast 只 attach、不消费 / 不打断"的场景）。
+  // engine 每帧重建，缓存生命周期 = engine 生命周期。
   const removalTimelineCache = new Map<string, StatusTimelineByPlayer>()
   function timelineExcluding(excludeId: string): StatusTimelineByPlayer {
     const cached = removalTimelineCache.get(excludeId)
     if (cached) return cached
     let result: StatusTimelineByPlayer
-    if (simulateOnRemove) {
-      result = simulateOnRemove(castEvents.filter(e => e.id !== excludeId)).statusTimelineByPlayer
+    const prebuilt = removalTimelinesByExcludeId?.get(excludeId)
+    if (prebuilt) {
+      result = prebuilt
     } else {
+      // 降级：按 sourceCastEventId 过滤主路径 timeline。消费型 cast 的截断效果不可还原；
+      // 适合自动重分类等不需要拖拽预览精确语义的场景。
       result = new Map()
       for (const [pid, byStatus] of defaultTimeline) {
         const newByStatus = new Map<number, StatusInterval[]>()
@@ -245,12 +242,12 @@ export function createPlacementEngine(input: PlacementEngineInput): PlacementEng
   function findInvalidCastEvents(removeCastEventId?: string): InvalidCastEvent[] {
     const effectiveEvents = effectiveCastEvents(removeCastEventId)
 
-    // 显式"模拟删除某 cast"语义：placement 必须用重跑后的 timeline，让依赖被删 cast
+    // 显式"模拟删除某 cast"语义：placement 必须用预算好的 timeline，让依赖被删 cast
     // buff 的其他 cast 在预览中真实失效。常规调用（无 removeCastEventId）共享 default。
-    const placementTimeline =
-      removeCastEventId && simulateOnRemove
-        ? simulateOnRemove(effectiveEvents).statusTimelineByPlayer
-        : defaultTimeline
+    // 未预算时降级（通过 timelineExcluding 走 sourceCastEventId 过滤）。
+    const placementTimeline = removeCastEventId
+      ? timelineExcluding(removeCastEventId)
+      : defaultTimeline
 
     // 1. placement 层失效
     const placementLost = new Map<string, boolean>()

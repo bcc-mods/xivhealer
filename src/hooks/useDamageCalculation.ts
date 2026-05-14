@@ -72,7 +72,18 @@ export function useDamageCalculation(
   // 是否走 worker 异步路径：回放 / 无 timeline / 无 partyState 都是同步派生路径
   const useWorker = !!timeline && !timeline.isReplayMode && !!partyState
 
-  const [workerState, setWorkerState] = useState<DamageCalculationResult>(EMPTY_RESULT)
+  // workerState 与 castTimestampSnapshot 同源同时刻更新：snapshot 是产出
+  // castEffectiveEndByCastEventId 的那次 simulate 的 cast.timestamps，下面 useMemo 用
+  // newTs + (snapEnd - snapTs) 重组 effectiveEnd。
+  //
+  // 为什么需要：拖动结束 updateCastEvent 同步 mutate timeline.castEvents → React
+  // re-render 用新 ts，但 worker 异步返回。stale 帧若直接 (oldEnd - newTs) 减法，
+  // CastEventIcon 算出的 effectiveDuration 突变（甚至 0 → 绿条消失），下一帧 worker
+  // 回来又恢复——肉眼"闪一下"。
+  const [workerState, setWorkerState] = useState<{
+    result: DamageCalculationResult
+    castTimestampSnapshot: Map<string, number>
+  }>(() => ({ result: EMPTY_RESULT, castTimestampSnapshot: new Map() }))
 
   useEffect(() => {
     if (!useWorker || !timeline || !partyState) return
@@ -98,7 +109,9 @@ export function useDamageCalculation(
     // 同时也不打断当前 commit；下一帧前 React 一定会处理这个 setState。
     queueMicrotask(() => {
       if (cancelled) return
-      setWorkerState(s => (s.isPending ? s : { ...s, isPending: true }))
+      setWorkerState(s =>
+        s.result.isPending ? s : { ...s, result: { ...s.result, isPending: true } }
+      )
     })
 
     workerClient
@@ -106,19 +119,26 @@ export function useDamageCalculation(
       .then(bundle => {
         if (cancelled) return
         setWorkerState({
-          results: bundle.main.damageResults,
-          statusTimelineByPlayer: bundle.main.statusTimelineByPlayer,
-          castEffectiveEndByCastEventId: bundle.main.castEffectiveEndByCastEventId,
-          healSnapshots: bundle.main.healSnapshots,
-          hpTimeline: bundle.main.hpTimeline,
-          removalTimelinesByExcludeId: bundle.removalTimelinesByExcludeId,
-          isPending: false,
+          result: {
+            results: bundle.main.damageResults,
+            statusTimelineByPlayer: bundle.main.statusTimelineByPlayer,
+            castEffectiveEndByCastEventId: bundle.main.castEffectiveEndByCastEventId,
+            healSnapshots: bundle.main.healSnapshots,
+            hpTimeline: bundle.main.hpTimeline,
+            removalTimelinesByExcludeId: bundle.removalTimelinesByExcludeId,
+            isPending: false,
+          },
+          // 与 bundle.main.castEffectiveEndByCastEventId 配对：本次 simulate 输入的
+          // cast timestamps；下面 useMemo 用 newTs + (snapEnd - snapTs) 重组 effectiveEnd。
+          castTimestampSnapshot: new Map(input.castEvents.map(ce => [ce.id, ce.timestamp])),
         })
       })
       .catch(err => {
         if (cancelled) return
         console.error('[calculator-worker] simulate failed', err)
-        setWorkerState(s => (s.isPending ? { ...s, isPending: false } : s))
+        setWorkerState(s =>
+          s.result.isPending ? { ...s, result: { ...s.result, isPending: false } } : s
+        )
       })
 
     return () => {
@@ -127,12 +147,23 @@ export function useDamageCalculation(
   }, [useWorker, timeline, partyState, statistics, extraExcludeIdsKey])
 
   // 同步派生：回放 / 无 timeline / 无 partyState 不动 state，避免 setState-in-effect。
-  // worker 路径返回 effect 维护的 workerState（stale-while-revalidate）。
+  // worker 路径返回 effect 维护的 workerState（stale-while-revalidate），但 effectiveEnd
+  // 用 currentTs + snapshotDuration 重组——防 stale 帧绿条闪烁，详见 useState 上方注释。
   return useMemo(() => {
     if (!timeline) return EMPTY_RESULT
     if (timeline.isReplayMode) return computeReplayResult(timeline)
     if (!partyState) return buildEmptyForTimeline(timeline)
-    return workerState
+    const { result, castTimestampSnapshot } = workerState
+    const staleEndMap = result.castEffectiveEndByCastEventId
+    if (castTimestampSnapshot.size === 0 || staleEndMap.size === 0) return result
+    const realigned = new Map<string, number>()
+    for (const ce of timeline.castEvents) {
+      const snapTs = castTimestampSnapshot.get(ce.id)
+      const snapEnd = staleEndMap.get(ce.id)
+      if (snapTs === undefined || snapEnd === undefined) continue
+      realigned.set(ce.id, ce.timestamp + (snapEnd - snapTs))
+    }
+    return { ...result, castEffectiveEndByCastEventId: realigned }
   }, [timeline, partyState, workerState])
 }
 

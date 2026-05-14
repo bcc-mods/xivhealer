@@ -436,3 +436,98 @@ describe('HP 模拟端到端（partial 段 + cast 治疗 + HoT）', () => {
     }
   })
 })
+
+describe('useDamageCalculation: castEffectiveEnd 在 stale 帧对齐当前 timestamp（防绿条闪烁）', () => {
+  // 拖动结束的时序：updateCastEvent 同步 mutate timeline.castEvents → React re-render 用
+  // 新 timestamp，但 worker 异步返回。stale 帧若直接拿旧 effectiveEnd 与新 timestamp 做减法，
+  // CastEventIcon 会算出 effectiveDuration = max(0, oldEnd - newTs) 突变（甚至 = 0 让绿条
+  // 消失），下一帧 worker 回来又恢复——肉眼"闪一下"。hook 内部用 snapshot duration + 当前
+  // timestamp 重组 effectiveEnd 来稳定 stale 帧。
+  it('cast timestamp 同步变化、worker 未返回的 stale 帧用 snapshot duration 重组 effectiveEnd', async () => {
+    const HOT_ACTION_ID = 999810
+    const HOT_STATUS_ID = 999811
+
+    const original = [...MITIGATION_DATA.actions]
+    MITIGATION_DATA.actions.push({
+      id: HOT_ACTION_ID,
+      name: 'mock-regen',
+      icon: '',
+      jobs: ['WHM'],
+      duration: 30,
+      cooldown: 0,
+      category: ['heal', 'partywide'],
+      executor: createRegenExecutor(HOT_STATUS_ID, 30),
+      statDataEntries: [{ type: 'heal', key: 1e6 + HOT_STATUS_ID }],
+    })
+
+    const spy = vi.spyOn(registry, 'getStatusById').mockImplementation(id => {
+      if (id === HOT_STATUS_ID) {
+        return fakeMeta(id, {
+          executor: regenStatusExecutor,
+          performance: { physics: 1, magic: 1, darkness: 1, heal: 1, maxHP: 1 },
+        })
+      }
+      return undefined
+    })
+
+    try {
+      useTimelineStore.setState({
+        partyState: { statuses: [], timestamp: 0 },
+        statistics: null,
+      })
+
+      const baseStatData = {
+        referenceMaxHP: 100000,
+        tankReferenceMaxHP: 100000,
+        shieldByAbility: {},
+        critShieldByAbility: {},
+        healByAbility: { [1e6 + HOT_STATUS_ID]: 3000 },
+        critHealByAbility: {},
+      }
+
+      const tl0: Timeline = {
+        id: 't',
+        name: 't',
+        encounter: { id: 0, name: '', displayName: '', zone: '', damageEvents: [] },
+        composition: { players: [{ id: 1, job: 'WHM' }] },
+        damageEvents: [
+          { id: 'd1', name: '', time: 100, damage: 1000, type: 'aoe', damageType: 'magical' },
+        ],
+        castEvents: [{ id: 'cast-1', actionId: HOT_ACTION_ID, timestamp: 0, playerId: 1 }],
+        statusEvents: [],
+        annotations: [],
+        statData: baseStatData,
+        createdAt: 0,
+        updatedAt: 0,
+      }
+
+      const { result, rerender } = renderHook(({ tl }) => useDamageCalculation(tl), {
+        initialProps: { tl: tl0 },
+      })
+      await flushWorker()
+      expect(result.current.castEffectiveEndByCastEventId.get('cast-1')).toBe(30)
+
+      // 拖动结束模拟：timestamp 0 → 20，timeline 新引用、castEvents 新数组（与 zustand mutation 等价）
+      const tl1: Timeline = {
+        ...tl0,
+        castEvents: [{ id: 'cast-1', actionId: HOT_ACTION_ID, timestamp: 20, playerId: 1 }],
+      }
+
+      // 不 flushWorker：模拟 stale-while-revalidate 那一帧（worker postMessage 已发出但未回包）
+      rerender({ tl: tl1 })
+
+      // 关键：旧实现这里会返回 stale 的 30（worker 还没回新值），CastEventIcon 算
+      // effectiveDuration = max(0, 30 − 20) = 10 → 绿条从 30s 长突变到 10s 长 → 闪烁。
+      // 修复后：用 snapshot duration (30) + 当前 ts (20) = 50，绿条稳定保持 30s 长。
+      expect(result.current.castEffectiveEndByCastEventId.get('cast-1')).toBe(50)
+
+      await flushWorker()
+      // worker 返回新结果：仍是 50（buff 未被 consume），但路径已是 worker 真实输出
+      expect(result.current.castEffectiveEndByCastEventId.get('cast-1')).toBe(50)
+    } finally {
+      spy.mockRestore()
+      MITIGATION_DATA.actions.length = 0
+      MITIGATION_DATA.actions.push(...original)
+    }
+  })
+})

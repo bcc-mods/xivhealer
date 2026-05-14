@@ -203,12 +203,14 @@ export default function TimelineCanvas({ width, height }: TimelineCanvasProps) {
   }, [timeline?.castEvents])
 
   const invalidCastEventMap = useMemo(() => {
-    if (!engine) return new Map<string, InvalidCastEventSummary>()
+    // 回放模式下数据来自 FFLogs 实战记录，placement/CD 校验对用户不可操作，
+    // 红框只是视觉噪声 → 直接返回空 Map 抑制标记
+    if (!engine || timeline?.isReplayMode) return new Map<string, InvalidCastEventSummary>()
     const invalid = engine.findInvalidCastEvents(draggingId ?? undefined)
     return new Map(
       invalid.map(r => [r.castEvent.id, { reason: r.reason, resourceId: r.resourceId }])
     )
-  }, [engine, draggingId])
+  }, [engine, draggingId, timeline?.isReplayMode])
 
   const { showTooltip, toggleTooltip, hideTooltip } = useTooltipStore()
   const isReadOnly = useEditorReadOnly()

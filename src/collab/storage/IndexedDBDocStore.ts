@@ -84,7 +84,7 @@ export class IndexedDBDocStore {
     return Y.mergeUpdates(parts)
   }
 
-  /** squash:snapshot + updates → 新 snapshot,清空 updates(Task 8 完善) */
+  /** squash:把 snapshot + 所有 updates 合并成新 snapshot,并清空 updates 表。 */
   async squash(docId: string): Promise<void> {
     const merged = await this.loadDoc(docId)
     if (!merged) return

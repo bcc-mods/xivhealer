@@ -17,6 +17,9 @@ export const LOCAL_ORIGIN = 'local'
  */
 export const EXIT_REPLAY_ORIGIN = 'exit-replay'
 
+/** 初始化/维护类写入的 Y.Doc 事务 origin —— 不被 UndoManager 跟踪 */
+export const HOUSEKEEPING_ORIGIN = 'housekeeping'
+
 /** IndexedDB 数据库名与对象仓库名 */
 export const IDB_NAME = 'healerbook_collab'
 export const IDB_STORE_SNAPSHOTS = 'snapshots'

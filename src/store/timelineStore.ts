@@ -40,7 +40,7 @@ import {
   yExitReplayMode,
 } from '@/collab/docSchema'
 import type { TimelineContent } from '@/collab/types'
-import { LOCAL_ORIGIN } from '@/collab/constants'
+import { LOCAL_ORIGIN, HOUSEKEEPING_ORIGIN } from '@/collab/constants'
 
 /** `yReplaceStatData` 接受宽泛 `Record`,此处收敛到 `TimelineStatData` 入参 */
 function replaceStatData(doc: YDoc, statData: TimelineStatData): void {
@@ -257,9 +257,12 @@ export const useTimelineStore = create<TimelineState>()((set, get) => {
       reproject()
 
       // 持久化数据中可能缺 statData(存量迁移产物)→ 补空结构
+      // 此写入是初始化维护,不应被 UndoManager 跟踪,故用 HOUSEKEEPING_ORIGIN
       const projected = get().timeline
       if (projected && !projected.statData) {
-        replaceStatData(engine.doc, createEmptyStatData())
+        engine.doc.transact(() => {
+          replaceStatData(engine.doc, createEmptyStatData())
+        }, HOUSEKEEPING_ORIGIN)
       }
 
       // 首帧投影后初始化小队状态

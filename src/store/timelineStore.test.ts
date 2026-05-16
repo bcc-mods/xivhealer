@@ -7,9 +7,12 @@
 
 import { describe, it, expect, beforeEach } from 'vitest'
 import 'fake-indexeddb/auto'
+import * as Y from 'yjs'
 import { useTimelineStore } from './timelineStore'
 import type { Composition } from '@/types/timeline'
 import type { TimelineContent } from '@/collab/types'
+import { IndexedDBDocStore } from '@/collab/storage/IndexedDBDocStore'
+import { buildYDoc } from '@/collab/docSchema'
 
 const mockComposition: Composition = {
   players: [
@@ -233,6 +236,32 @@ describe('undo/redo - Y.UndoManager', () => {
     await useTimelineStore.getState().openTimeline('new-timeline', baseContent)
     expect(useTimelineStore.getState().canUndo).toBe(false)
     expect(useTimelineStore.getState().canRedo).toBe(false)
+  })
+})
+
+describe('openTimeline statData auto-fill 不可撤销', () => {
+  beforeEach(() => {
+    // eslint-disable-next-line no-global-assign
+    indexedDB = new IDBFactory()
+    useTimelineStore.getState().reset()
+  })
+
+  it('打开缺少 statData 的持久化时间轴后,canUndo 应为 false', async () => {
+    const docId = 'test-housekeeping-no-statdata'
+
+    // 构建一个不含 statData 的 Y.Doc 并直接落盘,模拟存量迁移产物
+    const docWithoutStatData = buildYDoc({ ...baseContent }) // baseContent 无 statData 字段
+    const store = new IndexedDBDocStore()
+    await store.open()
+    await store.appendUpdate(docId, Y.encodeStateAsUpdate(docWithoutStatData))
+
+    // 不传 seedContent,让 openTimeline 从 IndexedDB 加载 → 触发 auto-fill 路径
+    await useTimelineStore.getState().openTimeline(docId)
+
+    // auto-fill 后,投影应已包含 statData
+    expect(useTimelineStore.getState().timeline?.statData).toBeDefined()
+    // 关键断言:HOUSEKEEPING_ORIGIN 写入不应被 UndoManager 跟踪
+    expect(useTimelineStore.getState().canUndo).toBe(false)
   })
 })
 

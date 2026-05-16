@@ -4,7 +4,7 @@
  * 从 Worker API 获取各副本的 TOP100 治疗排行，展示在首页
  */
 
-import { useMemo, useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Clock, RefreshCw, ChevronDown, ChevronRight, Server, Filter, Eraser } from 'lucide-react'
 import { RAID_TIERS, type RaidEncounter } from '@/data/raidEncounters'
@@ -369,9 +369,15 @@ export default function Top100Section() {
   })
   const [refreshTick, setRefreshTick] = useState(0)
 
-  const importedSources = useMemo(() => {
-    void refreshTick // 作为重建信号：bump 即失效
-    return new Set(buildFFLogsSourceIndex().keys())
+  const [importedSources, setImportedSources] = useState<Set<string>>(new Set())
+  useEffect(() => {
+    let ignore = false
+    void buildFFLogsSourceIndex().then(index => {
+      if (!ignore) setImportedSources(new Set(index.keys()))
+    })
+    return () => {
+      ignore = true
+    }
   }, [refreshTick])
 
   // 从 LocalStorage 读取已选职业

@@ -4,7 +4,6 @@ import {
   toV2,
   hydrateFromV2,
   serializeForServer,
-  toLocalStored,
   migrateV1ToV2,
   parseFromAny,
 } from './timelineFormat'
@@ -365,7 +364,7 @@ describe('toV2 / hydrateFromV2 (replay mode)', () => {
   })
 })
 
-describe('serializeForServer / toLocalStored', () => {
+describe('serializeForServer', () => {
   beforeEach(() => resetIdCounter())
 
   it('serializeForServer 不包含运行时字段', () => {
@@ -398,26 +397,6 @@ describe('serializeForServer / toLocalStored', () => {
     }
     const v2 = serializeForServer(tl)
     expect(v2.sd).toEqual(tl.statData)
-  })
-
-  it('toLocalStored 携带运行时字段', () => {
-    const tl: Timeline = {
-      ...makeEditorTimeline(),
-      isShared: true,
-      serverVersion: 3,
-      hasLocalChanges: false,
-      everPublished: true,
-    }
-    const stored = toLocalStored(tl)
-    expect(stored.v).toBe(2)
-    expect(stored.id).toBe('tl_xxx')
-    expect(stored.isShared).toBe(true)
-    expect(stored.serverVersion).toBe(3)
-    expect(stored.hasLocalChanges).toBe(false)
-    expect(stored.everPublished).toBe(true)
-    // V2 核心字段也在
-    expect(stored.n).toBe('M9S 进度轴')
-    expect(stored.de).toHaveLength(2)
   })
 })
 

@@ -3,9 +3,10 @@
  */
 
 import type { Timeline, Composition, DamageEvent } from '@/types/timeline'
+import type { LocalDocMeta } from '@/collab/types'
 import { generateId } from '@/utils/id'
 import { getEncounterById } from '@/data/raidEncounters'
-import { parseFromAny, toLocalStored } from '@/utils/timelineFormat'
+import { parseFromAny } from '@/utils/timelineFormat'
 
 const STORAGE_KEY = 'healerbook_timelines'
 
@@ -59,120 +60,24 @@ export function getTimeline(id: string): Timeline | null {
 }
 
 /**
- * 保存时间轴
- */
-export function saveTimeline(timeline: Timeline): void {
-  try {
-    // 保存时间轴数据（V2 格式）
-    localStorage.setItem(`${STORAGE_KEY}_${timeline.id}`, JSON.stringify(toLocalStored(timeline)))
-
-    // 更新元数据列表
-    const metadata = getAllTimelineMetadata()
-    const existingIndex = metadata.findIndex(m => m.id === timeline.id)
-
-    const newMetadata: TimelineMetadata = {
-      id: timeline.id,
-      name: timeline.name,
-      description: timeline.description,
-      encounterId: timeline.encounter?.id?.toString() || 'unknown',
-      createdAt: timeline.createdAt,
-      updatedAt: timeline.updatedAt,
-      ...(timeline.isShared && { isShared: true }),
-      composition: timeline.composition ?? null,
-    }
-
-    if (existingIndex >= 0) {
-      metadata[existingIndex] = newMetadata
-    } else {
-      metadata.push(newMetadata)
-    }
-
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(metadata))
-  } catch (error) {
-    console.error('Failed to save timeline:', error)
-    throw new Error('保存时间轴失败')
-  }
-}
-
-/**
- * 将本地时间轴标记为未发布（取消发布后同步本地状态）
- */
-export function unpublishTimeline(id: string): void {
-  try {
-    const data = localStorage.getItem(`${STORAGE_KEY}_${id}`)
-    if (!data) return
-    const raw = JSON.parse(data)
-    const overrides: Partial<Timeline> = {
-      id: raw.id ?? id,
-      isShared: raw.isShared,
-      serverVersion: raw.serverVersion,
-      hasLocalChanges: raw.hasLocalChanges,
-      everPublished: raw.everPublished,
-    }
-    if (raw.statData !== undefined) overrides.statData = raw.statData
-    const timeline = parseFromAny(raw, overrides)
-    const updated: Timeline = {
-      ...timeline,
-      isShared: false,
-      hasLocalChanges: false,
-      serverVersion: undefined,
-    }
-    localStorage.setItem(`${STORAGE_KEY}_${id}`, JSON.stringify(toLocalStored(updated)))
-
-    // 同步元数据（移除 isShared 标记）
-    const metadata = getAllTimelineMetadata()
-    const idx = metadata.findIndex(m => m.id === id)
-    if (idx >= 0) {
-      const entry = { ...metadata[idx] }
-      delete entry.isShared
-      metadata[idx] = entry
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(metadata))
-    }
-  } catch (error) {
-    console.error('Failed to unpublish timeline:', error)
-  }
-}
-
-/**
- * 删除时间轴
- */
-export function deleteTimeline(id: string): void {
-  try {
-    // 删除时间轴数据
-    localStorage.removeItem(`${STORAGE_KEY}_${id}`)
-
-    // 更新元数据列表
-    const metadata = getAllTimelineMetadata()
-    const filtered = metadata.filter(m => m.id !== id)
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(filtered))
-  } catch (error) {
-    console.error('Failed to delete timeline:', error)
-    throw new Error('删除时间轴失败')
-  }
-}
-
-/**
- * 构建 FFLogs 来源索引
+ * 构建 FFLogs 来源索引(读 IndexedDB meta 表)。
  *
- * 遍历本地所有时间轴，提取带 fflogsSource 的条目，按 `${reportCode}:${fightId}` 聚合。
- * 相同 key 有多条时保留 updatedAt 最大的一条。
- * 损坏或读取失败的条目静默跳过。
+ * 按 `${reportCode}:${fightId}` 聚合带 fflogsSource 的本地时间轴。
+ * 相同 key 多条时保留 updatedAt 最大者。
  */
-export function buildFFLogsSourceIndex(): Map<string, TimelineMetadata> {
-  const index = new Map<string, TimelineMetadata>()
-  const metadataList = getAllTimelineMetadata()
-
-  for (const metadata of metadataList) {
-    const timeline = getTimeline(metadata.id)
-    if (!timeline?.fflogsSource) continue
-
-    const key = `${timeline.fflogsSource.reportCode}:${timeline.fflogsSource.fightId}`
+export async function buildFFLogsSourceIndex(): Promise<Map<string, LocalDocMeta>> {
+  const { IndexedDBDocStore } = await import('@/collab/storage/IndexedDBDocStore')
+  const store = new IndexedDBDocStore()
+  await store.open()
+  const index = new Map<string, LocalDocMeta>()
+  for (const meta of await store.getAllMeta()) {
+    if (!meta.fflogsSource) continue
+    const key = `${meta.fflogsSource.reportCode}:${meta.fflogsSource.fightId}`
     const existing = index.get(key)
-    if (!existing || metadata.updatedAt > existing.updatedAt) {
-      index.set(key, metadata)
+    if (!existing || meta.updatedAt > existing.updatedAt) {
+      index.set(key, meta)
     }
   }
-
   return index
 }
 

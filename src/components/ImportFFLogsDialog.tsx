@@ -2,13 +2,14 @@
  * FFLogs 导入对话框
  */
 
-import { useState, useEffect, useMemo, useRef } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Loader2, Info } from 'lucide-react'
 import { parseFFLogsUrl } from '@/utils/fflogsParser'
 // fflogsClient / fflogsImporter 仅 ?client_import=1 才用，且该参数仅开发环境生效，
 // 改为 dynamic import：生产构建经 Vite 的 import.meta.env.DEV 常量折叠 + DCE，
 // 不会进 bundle。
 import { createNewTimeline, buildFFLogsSourceIndex } from '@/utils/timelineStorage'
+import type { LocalDocMeta } from '@/collab/types'
 import { createLocalTimeline } from '@/collab/createLocalTimeline'
 import { Modal, ModalContent, ModalHeader, ModalTitle, ModalFooter } from '@/components/ui/modal'
 import { getEncounterWithTier } from '@/data/raidEncounters'
@@ -44,12 +45,21 @@ export default function ImportFFLogsDialog({
   const validationError = url && !isValid ? '无法识别 FFLogs 链接，请检查 URL 格式' : ''
 
   // 查找本地是否已导入相同 reportCode+fightId 的时间轴
-  const duplicate = useMemo(() => {
+  const [duplicate, setDuplicate] = useState<LocalDocMeta | null>(null)
+  useEffect(() => {
     if (!parsed?.reportCode || parsed.isLastFight || parsed.fightId == null) {
-      return null
+      setDuplicate(null)
+      return
     }
-    const index = buildFFLogsSourceIndex()
-    return index.get(`${parsed.reportCode}:${parsed.fightId}`) ?? null
+    let ignore = false
+    void buildFFLogsSourceIndex().then(index => {
+      if (!ignore) {
+        setDuplicate(index.get(`${parsed.reportCode}:${parsed.fightId}`) ?? null)
+      }
+    })
+    return () => {
+      ignore = true
+    }
   }, [parsed?.reportCode, parsed?.fightId, parsed?.isLastFight])
 
   // 自动聚焦输入框并检测剪贴板
@@ -371,7 +381,7 @@ export default function ImportFFLogsDialog({
                 </p>
                 <button
                   type="button"
-                  onClick={() => window.open(`/timeline/${duplicate.id}`, '_blank')}
+                  onClick={() => window.open(`/timeline/${duplicate.docId}`, '_blank')}
                   className="ml-auto text-xs text-blue-700 dark:text-blue-300 hover:text-blue-900 dark:hover:text-blue-100"
                 >
                   查看

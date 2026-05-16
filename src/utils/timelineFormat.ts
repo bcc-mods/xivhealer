@@ -4,7 +4,6 @@
  * 职责：
  * - toV2 / hydrateFromV2：内存 Timeline ↔ V2
  * - serializeForServer：POST/PUT 用（不含运行时字段）
- * - toLocalStored：localStorage 用（V2 + 运行时元数据扁平内联）
  * - migrateV1ToV2 / parseFromAny：V1 遗留格式迁移 + 统一入站入口
  *
  * 设计：design/superpowers/specs/2026-04-16-timeline-format-v2-design.md
@@ -206,27 +205,6 @@ export function toV2(timeline: Timeline): V2Timeline {
 }
 
 export const serializeForServer = toV2
-
-// ──────────────────────────────────────────────────────────────
-// 本地存储形态
-// ──────────────────────────────────────────────────────────────
-
-export interface LocalStored extends V2Timeline {
-  id: string
-  isShared?: boolean
-  serverVersion?: number
-  hasLocalChanges?: boolean
-  everPublished?: boolean
-}
-
-export function toLocalStored(timeline: Timeline): LocalStored {
-  const out: LocalStored = { ...toV2(timeline), id: timeline.id }
-  if (timeline.isShared !== undefined) out.isShared = timeline.isShared
-  if (timeline.serverVersion !== undefined) out.serverVersion = timeline.serverVersion
-  if (timeline.hasLocalChanges !== undefined) out.hasLocalChanges = timeline.hasLocalChanges
-  if (timeline.everPublished !== undefined) out.everPublished = timeline.everPublished
-  return out
-}
 
 // ──────────────────────────────────────────────────────────────
 // V2 → 内存

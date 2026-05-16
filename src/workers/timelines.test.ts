@@ -296,7 +296,7 @@ describe('GET /api/timelines/:id', () => {
     expect(res.status).toBe(404)
   })
 
-  it('KV 缓存命中时返回 cached JSON', async () => {
+  it('KV 缓存命中时返回 cached JSON（新版 role-scoped envelope）', async () => {
     const db = makeMockD1([makeDbRow()])
     const env = makeMockEnv(db)
     // Pre-populate KV
@@ -305,8 +305,15 @@ describe('GET /api/timelines/:id', () => {
     const req = new Request('https://example.com/api/timelines/server123', { method: 'GET' })
     const res = await app.fetch(req, env)
     expect(res.status).toBe(200)
-    const body = (await res.json()) as { name: string }
-    expect(body.name).toBe('Cached')
+    const body = (await res.json()) as {
+      role: string
+      authorName: string
+      snapshot: { name: string }
+    }
+    // 未登录匿名请求 → viewer role，cached timeline 内容嵌套在 snapshot 字段
+    expect(body.role).toBe('viewer')
+    expect(body.authorName).toBe('User1')
+    expect(body.snapshot.name).toBe('Cached')
   })
 })
 

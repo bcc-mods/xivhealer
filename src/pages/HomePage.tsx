@@ -2,14 +2,11 @@
  * 主页
  */
 
-import { useState, lazy, Suspense } from 'react'
+import { useState, useCallback, useEffect, lazy, Suspense } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Plus, Download, CircleHelp, Info } from 'lucide-react'
-import {
-  getAllTimelineMetadata,
-  deleteTimeline,
-  type TimelineMetadata,
-} from '@/utils/timelineStorage'
+import { IndexedDBDocStore } from '@/collab/storage/IndexedDBDocStore'
+import type { LocalDocMeta } from '@/collab/types'
 import ConfirmDialog from '@/components/ConfirmDialog'
 import { toast } from 'sonner'
 import { APP_NAME } from '@/lib/constants'
@@ -45,19 +42,24 @@ export default function HomePage() {
   const [deletePublishedConfirmOpen, setDeletePublishedConfirmOpen] = useState(false)
   const [publishedTimelineToDelete, setPublishedTimelineToDelete] = useState<string | null>(null)
 
-  const [timelines, setTimelines] = useState<TimelineMetadata[]>(() =>
-    getAllTimelineMetadata().sort((a, b) => b.updatedAt - a.updatedAt)
-  )
+  const [timelines, setTimelines] = useState<LocalDocMeta[]>([])
+
+  const loadTimelines = useCallback(async () => {
+    const store = new IndexedDBDocStore()
+    await store.open()
+    const all = await store.getAllMeta()
+    setTimelines(all.sort((a, b) => b.updatedAt - a.updatedAt))
+  }, [])
+
+  useEffect(() => {
+    void loadTimelines() // eslint-disable-line react-hooks/set-state-in-effect
+  }, [loadTimelines])
 
   const { data: myTimelines } = useQuery({
     queryKey: ['myTimelines'],
     queryFn: fetchMyTimelines,
     enabled: isLoggedIn,
   })
-
-  const loadTimelines = () => {
-    setTimelines(getAllTimelineMetadata().sort((a, b) => b.updatedAt - a.updatedAt))
-  }
 
   const handleCreateNew = () => {
     track('timeline-create-start')
@@ -167,17 +169,24 @@ export default function HomePage() {
           <section className="mb-12">
             <h2 className="text-xl font-semibold mb-4">本地时间轴</h2>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {timelines.map(timeline => (
+              {timelines.map(meta => (
                 <TimelineCard
-                  key={timeline.id}
-                  timeline={timeline}
+                  key={meta.docId}
+                  timeline={{
+                    id: meta.docId,
+                    name: meta.name,
+                    encounterId: String(meta.encounterId),
+                    createdAt: meta.createdAt,
+                    updatedAt: meta.updatedAt,
+                    composition: meta.composition,
+                  }}
                   onClick={() => {
                     track('timeline-open', { source: 'local' })
-                    navigate(`/timeline/${timeline.id}`)
+                    navigate(`/timeline/${meta.docId}`)
                   }}
                   onDelete={e => {
                     e.stopPropagation()
-                    handleDeleteTimeline(timeline.id)
+                    handleDeleteTimeline(meta.docId)
                   }}
                 />
               ))}
@@ -253,10 +262,12 @@ export default function HomePage() {
         title="删除时间轴"
         description="确定要删除这个时间轴吗？"
         variant="destructive"
-        onConfirm={() => {
+        onConfirm={async () => {
           if (timelineToDelete) {
-            deleteTimeline(timelineToDelete)
-            loadTimelines()
+            const store = new IndexedDBDocStore()
+            await store.open()
+            await store.deleteDoc(timelineToDelete)
+            await loadTimelines()
             setTimelineToDelete(null)
             toast.success('时间轴已删除')
           }

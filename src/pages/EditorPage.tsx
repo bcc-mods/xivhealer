@@ -1,24 +1,26 @@
 /**
- * 编辑器 / 查看页面（统一路由 /timeline/:id）
+ * 编辑器 / 查看页面(统一路由 /timeline/:id)
  *
- * 三种模式由数据状态自动推导：
- *   local  — localStorage 有且 isShared=false：纯本地编辑，未发布
- *   author — localStorage 有且 isShared=true，或从 API 恢复（isAuthor=true）：作者查看/编辑
- *   view   — localStorage 无，API 返回 isAuthor=false：只读查看他人时间轴
+ * 六种状态:
+ *   local         — 本地 IndexedDB 有且未发布:纯本地编辑
+ *   editor        — 已发布且当前用户在编辑者白名单:实时协同编辑
+ *   viewer        — 已发布、他人时间轴:只读查看(服务端 snapshot)
+ *   loading       — 模式推导中
+ *   not_found     — 本地无 + 服务端 404
+ *   network_error — 服务端请求失败(非 404)
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
-import { House } from 'lucide-react'
 import { toast } from 'sonner'
+import { House } from 'lucide-react'
 import { useTimelineStore } from '@/store/timelineStore'
 import { useUIStore } from '@/store/uiStore'
-import { useAuthStore } from '@/store/authStore'
 import { useMitigationStore } from '@/store/mitigationStore'
-import { getTimeline, saveTimeline, unpublishTimeline } from '@/utils/timelineStorage'
 import { setSyncScrollProgress } from '@/utils/syncScrollProgress'
 import { fetchSharedTimeline } from '@/api/timelineShareApi'
+import { createLocalTimeline } from '@/collab/createLocalTimeline'
+import { IndexedDBDocStore } from '@/collab/storage/IndexedDBDocStore'
 import { useEncounterStatistics } from '@/hooks/useEncounterStatistics'
 import { useDamageCalculation } from '@/hooks/useDamageCalculation'
 import { useEditorReadOnly } from '@/hooks/useEditorReadOnly'
@@ -35,11 +37,9 @@ import FullScreenLoader from '@/components/FullScreenLoader'
 import { Button } from '@/components/ui/button'
 import { APP_NAME } from '@/lib/constants'
 import ThemeToggle from '@/components/ThemeToggle'
-import type { Timeline } from '@/types/timeline'
-import { generateId } from '@/utils/id'
 import { track } from '@/utils/analytics'
 
-type PageMode = 'local' | 'author' | 'view' | 'loading' | 'not_found' | 'network_error'
+type PageMode = 'local' | 'editor' | 'viewer' | 'loading' | 'not_found' | 'network_error'
 
 export default function EditorPage() {
   const { id } = useParams<{ id: string }>()
@@ -52,50 +52,123 @@ export default function EditorPage() {
     else next.delete('view')
     setSearchParams(next, { replace: true })
   }
-  const isLoggedIn = useAuthStore(s => !!s.accessToken)
-  const { timeline, setTimeline, updateTimelineName, updateTimelineDescription } =
-    useTimelineStore()
+
+  const timeline = useTimelineStore(s => s.timeline)
+  const updateTimelineName = useTimelineStore(s => s.updateTimelineName)
+  const updateTimelineDescription = useTimelineStore(s => s.updateTimelineDescription)
+  const openTimeline = useTimelineStore(s => s.openTimeline)
+  const setViewerSnapshot = useTimelineStore(s => s.setViewerSnapshot)
+  const reset = useTimelineStore(s => s.reset)
+
   const mitigationActions = useMitigationStore(s => s.actions)
   const loadMitigationActions = useMitigationStore(s => s.loadActions)
 
-  // 页面挂载时确保 mitigation actions 已加载（两个视图都依赖）
+  const [mode, setMode] = useState<PageMode>('loading')
+  const [authorName, setAuthorName] = useState<string>('')
+
   useEffect(() => {
-    if (mitigationActions.length === 0) {
-      loadMitigationActions()
-    }
+    if (mitigationActions.length === 0) loadMitigationActions()
   }, [mitigationActions.length, loadMitigationActions])
 
-  // 同步读 localStorage，id 变化时重新取，其余渲染复用缓存
-  const localTimeline = useMemo(() => (id ? getTimeline(id) : null), [id])
+  // ── 模式推导 + 加载 ────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!id) {
+      setMode('not_found') // eslint-disable-line react-hooks/set-state-in-effect
+      return
+    }
+    let ignore = false
+    setMode('loading')
+    setAuthorName('')
+    useUIStore.setState({ isReadOnly: false })
+    ;(async () => {
+      try {
+        const store = new IndexedDBDocStore()
+        await store.open()
+        const meta = await store.getMeta(id)
+        if (ignore) return
 
-  // 仅在本地无记录时才请求 API
-  const {
-    data: apiData,
-    isLoading,
-    error,
-  } = useQuery({
-    queryKey: ['shared-timeline', id, isLoggedIn],
-    queryFn: () => fetchSharedTimeline(id!),
-    // everPublished 的本地时间轴也查询，以便检测服务端已取消发布的情况
-    enabled: !!id && (localTimeline === null || !!localTimeline?.everPublished),
-    retry: false,
-    // everPublished 验证请求不使用缓存，确保每次都拿最新状态
-    staleTime: localTimeline?.everPublished ? 0 : 5 * 60 * 1000,
-    gcTime: localTimeline?.everPublished ? 0 : 5 * 60 * 1000,
-  })
+        if (meta) {
+          if (meta.published) {
+            await openTimeline(id, { published: true })
+            if (!ignore) setMode('editor')
+          } else {
+            await openTimeline(id)
+            if (!ignore) setMode('local')
+          }
+          return
+        }
 
-  // 从 query 状态派生页面模式，无需额外 useState
-  const mode: PageMode = (() => {
-    if (!id) return 'not_found'
-    if (localTimeline) return localTimeline.isShared ? 'author' : 'local'
-    if (isLoading || (!apiData && !error)) return 'loading'
-    if (error)
-      return error instanceof Error && error.message === 'NOT_FOUND' ? 'not_found' : 'network_error'
-    if (apiData) return apiData.isAuthor ? 'author' : 'view'
-    return 'loading'
-  })()
+        const res = await fetchSharedTimeline(id)
+        if (ignore) return
+        setAuthorName(res.authorName)
+        if (res.role === 'editor') {
+          await openTimeline(id, { published: true })
+          if (!ignore) setMode('editor')
+        } else {
+          if (ignore) return
+          setViewerSnapshot(res.snapshot!)
+          useUIStore.setState({ isReadOnly: true })
+          setMode('viewer')
+          track('timeline-view-shared', { timelineId: id })
+        }
+      } catch (err) {
+        if (ignore) return
+        setMode(err instanceof Error && err.message === 'NOT_FOUND' ? 'not_found' : 'network_error')
+      }
+    })()
 
-  // callback ref：DOM attach 时触发 state 更新，确保 ResizeObserver 在加载完成后正确初始化
+    return () => {
+      ignore = true
+    }
+  }, [id, openTimeline, setViewerSnapshot])
+
+  // 卸载 / 切 id 时重置 store(断开 WS、销毁引擎)
+  useEffect(() => {
+    return () => {
+      useUIStore.setState({ isReadOnly: false })
+      reset()
+    }
+  }, [id, reset])
+
+  // 发布成功回调:同 id 原地升级 editor;id 变更则 navigate 重挂
+  const handlePublished = useCallback(
+    (newId: string) => {
+      if (newId === id) {
+        setMode('editor')
+      } else {
+        const query = viewMode === 'table' ? '?view=table' : ''
+        navigate(`/timeline/${newId}${query}`, { replace: true })
+      }
+    },
+    [id, navigate, viewMode]
+  )
+
+  // ── 在本地创建副本(viewer 模式) ─────────────────────────────────────────
+  const handleCreateCopy = async () => {
+    if (!timeline) return
+    try {
+      const newId = await createLocalTimeline({
+        name: `${timeline.name}(副本)`,
+        description: timeline.description,
+        encounter: timeline.encounter,
+        fflogsSource: timeline.fflogsSource,
+        gameZoneId: timeline.gameZoneId,
+        syncEvents: timeline.syncEvents,
+        isReplayMode: timeline.isReplayMode,
+        composition: timeline.composition,
+        damageEvents: timeline.damageEvents,
+        castEvents: timeline.castEvents,
+        annotations: timeline.annotations ?? [],
+        statData: timeline.statData,
+        createdAt: Math.floor(Date.now() / 1000),
+      })
+      track('timeline-create-copy', { encounterId: timeline.encounter?.id })
+      navigate(`/timeline/${newId}`)
+    } catch (err) {
+      toast.error('创建副本失败:' + (err instanceof Error ? err.message : '未知错误'))
+    }
+  }
+
   const [canvasContainer, setCanvasContainer] = useState<HTMLDivElement | null>(null)
   const canvasContainerRef = useCallback((node: HTMLDivElement | null) => {
     setCanvasContainer(node)
@@ -106,20 +179,14 @@ export default function EditorPage() {
   const selectedCastEventId = useTimelineStore(s => s.selectedCastEventId)
   const draggingId = useUIStore(s => s.draggingId)
   const extraExcludeIds = useMemo(
-    () => [selectedCastEventId, draggingId].filter((id): id is string => !!id),
+    () => [selectedCastEventId, draggingId].filter((x): x is string => !!x),
     [selectedCastEventId, draggingId]
   )
   const calculationResults = useDamageCalculation(timeline, { extraExcludeIds })
   const isReadOnly = useEditorReadOnly()
 
-  // 跨视图的变体自动重分类：任何状态变化（拖 37014、添加/删除 cast、等）都可能让
-  // 同轨成员中某些 cast 的 actionId 不再是当前时刻的唯一合法成员。每次 simulate/
-  // castEvents 变化后扫一遍，把能自动切到唯一合法变体的 cast 改 actionId。放在
-  // EditorPage 层而不是 Timeline 里——表格视图下 Timeline 不挂载，否则 hook 不跑。
   useEffect(() => {
     if (!timeline || isReadOnly) return
-    // 自动重分类不调 findInvalidCastEvents（不需要拖拽预览语义）→ 不传 simulateOnRemove，
-    // 所有 canPlaceCastEvent / pickUniqueMember 直接共享主路径 statusTimelineByPlayer。
     const engine = createPlacementEngine({
       castEvents: timeline.castEvents,
       actions: new Map(mitigationActions.map(a => [a.id, a])),
@@ -145,88 +212,12 @@ export default function EditorPage() {
     }
   }, [calculationResults.statusTimelineByPlayer, timeline, mitigationActions, isReadOnly])
 
-  // 离开页面（id 变化或卸载）时清空 store
-  useEffect(() => {
-    return () => {
-      useUIStore.setState({ isReadOnly: false })
-      setTimeline(null)
-    }
-  }, [id, setTimeline])
-
-  // localTimeline 是否已同步到 store（避免 apiData 变化导致重复 setTimeline）
-  const localSyncedRef = useRef(false)
-  useEffect(() => {
-    localSyncedRef.current = false
-  }, [id])
-
-  // ── 副作用：将加载结果同步到 store ───────────────────────────────────────
-  useEffect(() => {
-    if (localTimeline) {
-      // 本地标记为已发布，但服务端已不存在 → 同步清除发布状态
-      if (localTimeline.isShared && error instanceof Error && error.message === 'NOT_FOUND') {
-        unpublishTimeline(localTimeline.id)
-        const updated: Timeline = {
-          ...localTimeline,
-          isShared: false,
-          hasLocalChanges: false,
-          serverVersion: undefined,
-        }
-        saveTimeline(updated)
-        setTimeline(updated)
-        localSyncedRef.current = true
-      } else if (!localSyncedRef.current) {
-        setTimeline(localTimeline)
-        localSyncedRef.current = true
-      }
-      // 不返回 cleanup：localTimeline 分支不依赖 apiData，
-      // apiData 变化导致的 effect 重跑不应触及 store
-      return
-    }
-
-    if (!apiData) return
-
-    const { timeline: serverTimeline, isAuthor, version } = apiData
-
-    if (isAuthor) {
-      const restored: Timeline = {
-        ...serverTimeline,
-        statusEvents: [],
-        annotations: serverTimeline.annotations ?? [],
-        isShared: true,
-        everPublished: true,
-        hasLocalChanges: false,
-        serverVersion: version,
-      }
-      saveTimeline(restored)
-      setTimeline(restored)
-      toast.success('已从服务器恢复此时间轴')
-    } else {
-      const viewTimeline: Timeline = {
-        ...serverTimeline,
-        statusEvents: [],
-        annotations: serverTimeline.annotations ?? [],
-        isShared: false,
-        hasLocalChanges: false,
-      }
-      setTimeline(viewTimeline)
-      useUIStore.setState({ isReadOnly: true })
-      track('timeline-view-shared', {
-        timelineId: serverTimeline.id,
-        encounterId: serverTimeline.encounter?.id,
-      })
-    }
-  }, [localTimeline, apiData, error, setTimeline])
-
-  // ── 离开编辑器页面时重置共享滚动进度 ─────────────────────────────────────
-  // syncScrollProgress 仅用于"同一会话内两视图切换同步位置"，
-  // 切换到其他页面后再进入新时间轴应该从 0 开始。
   useEffect(() => {
     return () => {
       setSyncScrollProgress(0)
     }
   }, [])
 
-  // ── 禁止浏览器原生缩放 ─────────────────────────────────────────────────────
   useEffect(() => {
     const preventZoom = (e: WheelEvent) => {
       if (e.ctrlKey || e.metaKey) e.preventDefault()
@@ -242,31 +233,26 @@ export default function EditorPage() {
     }
   }, [])
 
-  // ── 监听容器尺寸变化 ───────────────────────────────────────────────────────
   useEffect(() => {
     if (!canvasContainer) return
-
     let resizeTimeout: number | null = null
-
     const updateSize = () => {
       const newWidth = canvasContainer.clientWidth
       const newHeight = canvasContainer.clientHeight
-      setCanvasSize(prev => {
-        if (prev.width === newWidth && prev.height === newHeight) return prev
-        return { width: newWidth, height: newHeight }
-      })
+      setCanvasSize(prev =>
+        prev.width === newWidth && prev.height === newHeight
+          ? prev
+          : { width: newWidth, height: newHeight }
+      )
     }
-
     const debouncedUpdateSize = () => {
       if (resizeTimeout) clearTimeout(resizeTimeout)
       resizeTimeout = window.setTimeout(updateSize, 100)
     }
-
     updateSize()
     window.addEventListener('resize', debouncedUpdateSize)
     const resizeObserver = new ResizeObserver(debouncedUpdateSize)
     resizeObserver.observe(canvasContainer)
-
     return () => {
       if (resizeTimeout) clearTimeout(resizeTimeout)
       window.removeEventListener('resize', debouncedUpdateSize)
@@ -274,31 +260,7 @@ export default function EditorPage() {
     }
   }, [canvasContainer])
 
-  // ── 在本地创建副本（view 模式） ───────────────────────────────────────────
-  const handleCreateCopy = () => {
-    if (!apiData) return
-    const newId = generateId()
-    const now = Math.floor(Date.now() / 1000)
-    const copy: Timeline = {
-      ...apiData.timeline,
-      id: newId,
-      name: `${apiData.timeline.name}（副本）`,
-      statusEvents: [],
-      annotations: apiData.timeline.annotations ?? [],
-      isShared: false,
-      hasLocalChanges: false,
-      createdAt: now,
-      updatedAt: now,
-    }
-    saveTimeline(copy)
-    track('timeline-create-copy', { encounterId: apiData.timeline.encounter?.id })
-    navigate(`/timeline/${newId}`)
-  }
-
-  // ── 加载 / 错误屏 ─────────────────────────────────────────────────────────
-  if (mode === 'loading') {
-    return <FullScreenLoader />
-  }
+  if (mode === 'loading') return <FullScreenLoader />
 
   if (mode === 'not_found') {
     return (
@@ -315,7 +277,7 @@ export default function EditorPage() {
   if (mode === 'network_error') {
     return (
       <div className="flex min-h-screen items-center justify-center flex-col gap-4">
-        <p className="text-muted-foreground">加载失败，请检查网络连接</p>
+        <p className="text-muted-foreground">加载失败,请检查网络连接</p>
         <Button onClick={() => window.location.reload()}>重试</Button>
         <Button variant="outline" onClick={() => navigate('/')}>
           <House className="w-4 h-4 mr-2" />
@@ -325,7 +287,7 @@ export default function EditorPage() {
     )
   }
 
-  const isViewMode = mode === 'view'
+  const isViewMode = mode === 'viewer'
 
   return (
     <div
@@ -334,7 +296,6 @@ export default function EditorPage() {
     >
       <title>{timeline?.name ? `${timeline.name} - ${APP_NAME}` : APP_NAME}</title>
 
-      {/* Header */}
       <header className="border-b flex-shrink-0">
         <div className="px-4 py-3 flex items-center gap-4">
           <button
@@ -345,26 +306,22 @@ export default function EditorPage() {
           </button>
 
           {isViewMode ? (
-            // 只读头部：静态标题 + 说明（只读）
             <div>
               <div className="flex items-center gap-2">
-                <h1 className="text-lg font-bold">{apiData?.timeline.name}</h1>
-                {apiData?.authorName && (
+                <h1 className="text-lg font-bold">{timeline?.name}</h1>
+                {authorName && (
                   <span className="rounded-full bg-muted px-2.5 py-0.5 text-xs text-muted-foreground">
-                    By {apiData.authorName}
+                    By {authorName}
                   </span>
                 )}
               </div>
               <EditableDescription
-                value={apiData?.timeline.description || ''}
+                value={timeline?.description || ''}
                 onChange={() => {}}
                 readOnly
               />
             </div>
-          ) : null}
-
-          {!isViewMode && (
-            // 编辑头部：可编辑标题 + 描述
+          ) : (
             <div>
               <EditableTitle
                 value={timeline?.name || '时间轴编辑器'}
@@ -387,12 +344,12 @@ export default function EditorPage() {
       <DamageCalculationContext.Provider value={calculationResults}>
         <EditorToolbar
           onCreateCopy={isViewMode ? handleCreateCopy : undefined}
+          onPublished={handlePublished}
           forceReadOnly={isViewMode}
           viewMode={viewMode}
           onViewModeChange={handleViewModeChange}
         />
 
-        {/* Main Content */}
         <div className="flex-1 flex overflow-hidden">
           <div className="flex-1 overflow-hidden">
             <div ref={canvasContainerRef} className="h-full">

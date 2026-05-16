@@ -3,7 +3,6 @@
  */
 
 import { useState, lazy, Suspense } from 'react'
-import { useNavigate } from 'react-router-dom'
 import {
   ZoomIn,
   ZoomOut,
@@ -53,17 +52,15 @@ import {
 import CompositionPopover from './CompositionPopover'
 import FilterMenu from './FilterMenu/FilterMenu'
 import SharePopover from './SharePopover'
-import ConflictDialog from './ConflictDialog'
 import StatDataDialog from './StatDataDialog'
 const ExportExcelDialog = lazy(() => import('./ExportExcelDialog'))
 const ExportSoumaDialog = lazy(() => import('./ExportSoumaDialog'))
-import { fetchSharedTimeline, type ConflictError } from '@/api/timelineShareApi'
-import { useAuthStore } from '@/store/authStore'
 import { useEncounterStatistics } from '@/hooks/useEncounterStatistics'
 import { track } from '@/utils/analytics'
 
 interface EditorToolbarProps {
   onCreateCopy?: () => void
+  onPublished?: (newId: string) => void
   forceReadOnly?: boolean
   viewMode: 'timeline' | 'table'
   onViewModeChange: (mode: 'timeline' | 'table') => void
@@ -71,20 +68,17 @@ interface EditorToolbarProps {
 
 export default function EditorToolbar({
   onCreateCopy,
+  onPublished,
   forceReadOnly,
   viewMode,
   onViewModeChange,
 }: EditorToolbarProps) {
-  const navigate = useNavigate()
   const {
     timeline,
     exitReplayMode,
     zoomLevel,
     setZoomLevel,
     setPendingScrollProgress,
-    applyPublishResult,
-    applyUpdateResult,
-    applyServerTimeline,
     selectEvent,
     selectCastEvent,
     undo,
@@ -100,7 +94,6 @@ export default function EditorToolbar({
     toggleEnableHpSimulation,
   } = useUIStore()
   const [showExitReplayConfirm, setShowExitReplayConfirm] = useState(false)
-  const [conflict, setConflict] = useState<ConflictError | null>(null)
   const [showStatDataDialog, setShowStatDataDialog] = useState(false)
   const [showExportDialog, setShowExportDialog] = useState(false)
   const [showSoumaDialog, setShowSoumaDialog] = useState(false)
@@ -109,10 +102,10 @@ export default function EditorToolbar({
 
   const canUndo = useTimelineStore(s => s.canUndo)
   const canRedo = useTimelineStore(s => s.canRedo)
+  const isPublished = useTimelineStore(s => s.isPublished)
 
   const isReplayMode = timeline?.isReplayMode || false
   const isReadOnly = useEditorReadOnly()
-  const accessToken = useAuthStore(s => s.accessToken)
 
   const encounterId = timeline?.encounter?.id
   const statisticsQuery = useEncounterStatistics(encounterId)
@@ -373,14 +366,9 @@ export default function EditorToolbar({
                 ) : (
                   <SharePopover
                     timeline={timeline}
+                    isPublished={isPublished}
                     viewMode={viewMode}
-                    onPublished={(newId, publishedAt, version) => {
-                      applyPublishResult(newId, publishedAt, version)
-                      const query = viewMode === 'table' ? '?view=table' : ''
-                      navigate(`/timeline/${newId}${query}`, { replace: true })
-                    }}
-                    onUpdated={(updatedAt, version) => applyUpdateResult(updatedAt, version)}
-                    onConflict={c => setConflict(c)}
+                    onPublished={newId => onPublished?.(newId)}
                   />
                 )}
               </>
@@ -452,28 +440,6 @@ export default function EditorToolbar({
         </div>
       )}
 
-      {conflict && timeline && (
-        <ConflictDialog
-          open={true}
-          localUpdatedAt={timeline.updatedAt}
-          serverUpdatedAt={conflict.serverUpdatedAt}
-          onKeepLocal={async () => {
-            if (!accessToken) return
-            const { updateTimeline } = await import('@/api/timelineShareApi')
-            const result = await updateTimeline(timeline.id, timeline)
-            if (!('type' in result)) {
-              applyUpdateResult(result.updatedAt, result.version)
-            }
-            setConflict(null)
-          }}
-          onUseServer={async () => {
-            if (!accessToken) return
-            const server = await fetchSharedTimeline(timeline.id)
-            applyServerTimeline(server)
-            setConflict(null)
-          }}
-        />
-      )}
       <StatDataDialog open={showStatDataDialog} onClose={() => setShowStatDataDialog(false)} />
       <Suspense fallback={null}>
         {showExportDialog && (

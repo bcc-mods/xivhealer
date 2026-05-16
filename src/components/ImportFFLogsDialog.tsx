@@ -8,7 +8,8 @@ import { parseFFLogsUrl } from '@/utils/fflogsParser'
 // fflogsClient / fflogsImporter 仅 ?client_import=1 才用，且该参数仅开发环境生效，
 // 改为 dynamic import：生产构建经 Vite 的 import.meta.env.DEV 常量折叠 + DCE，
 // 不会进 bundle。
-import { createNewTimeline, saveTimeline, buildFFLogsSourceIndex } from '@/utils/timelineStorage'
+import { createNewTimeline, buildFFLogsSourceIndex } from '@/utils/timelineStorage'
+import { createLocalTimeline } from '@/collab/createLocalTimeline'
 import { Modal, ModalContent, ModalHeader, ModalTitle, ModalFooter } from '@/components/ui/modal'
 import { getEncounterWithTier } from '@/data/raidEncounters'
 import { track } from '@/utils/analytics'
@@ -108,10 +109,24 @@ export default function ImportFFLogsDialog({
       const newTimeline = parseFromAny(raw, { id: generateId() })
       newTimeline.description = `导入自 ${url}`
 
-      saveTimeline(newTimeline)
+      const newId = await createLocalTimeline({
+        name: newTimeline.name,
+        description: newTimeline.description,
+        encounter: newTimeline.encounter,
+        fflogsSource: newTimeline.fflogsSource,
+        gameZoneId: newTimeline.gameZoneId,
+        syncEvents: newTimeline.syncEvents,
+        isReplayMode: newTimeline.isReplayMode,
+        composition: newTimeline.composition,
+        damageEvents: newTimeline.damageEvents,
+        castEvents: newTimeline.castEvents,
+        annotations: newTimeline.annotations ?? [],
+        statData: newTimeline.statData,
+        createdAt: newTimeline.createdAt,
+      })
       track('fflogs-import', { success: true, encounterId: newTimeline.encounter?.id ?? 0 })
 
-      window.open(`/timeline/${newTimeline.id}`, '_blank')
+      window.open(`/timeline/${newId}`, '_blank')
       onImported()
       onClose()
     } catch (err) {
@@ -285,11 +300,25 @@ export default function ImportFFLogsDialog({
       }
 
       // 保存时间轴
-      saveTimeline(newTimeline)
+      const newId = await createLocalTimeline({
+        name: newTimeline.name,
+        description: newTimeline.description,
+        encounter: newTimeline.encounter,
+        fflogsSource: newTimeline.fflogsSource,
+        gameZoneId: newTimeline.gameZoneId,
+        syncEvents: newTimeline.syncEvents,
+        isReplayMode: newTimeline.isReplayMode,
+        composition: newTimeline.composition,
+        damageEvents: newTimeline.damageEvents,
+        castEvents: newTimeline.castEvents,
+        annotations: newTimeline.annotations ?? [],
+        statData: newTimeline.statData,
+        createdAt: newTimeline.createdAt,
+      })
       track('fflogs-import', { success: true, encounterId: fight.encounterID ?? 0 })
 
       // 跳转到编辑器
-      window.open(`/timeline/${newTimeline.id}`, '_blank')
+      window.open(`/timeline/${newId}`, '_blank')
       onImported()
       onClose()
     } catch (err) {

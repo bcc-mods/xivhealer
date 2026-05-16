@@ -16,11 +16,13 @@ import { create } from 'zustand'
 import type { Timeline, DamageEvent, CastEvent, Composition, Annotation } from '@/types/timeline'
 import type { PartyState } from '@/types/partyState'
 import type { ActionExecutionContext, EncounterStatistics } from '@/types/mitigation'
-import type { SharedTimelineResponse } from '@/api/timelineShareApi'
 import { MITIGATION_DATA } from '@/data/mitigationActions'
 import { createEmptyStatData, cleanupStatData } from '@/utils/statDataUtils'
 import type { TimelineStatData } from '@/types/statData'
 import { SyncEngine } from '@/collab/SyncEngine'
+import type { ConnectionStatus } from '@/collab/RemoteConnection'
+import type { LocalDocMeta } from '@/collab/types'
+import { useAuthStore } from '@/store/authStore'
 import type { Doc as YDoc } from 'yjs'
 import {
   buildYDoc,
@@ -45,23 +47,6 @@ import { LOCAL_ORIGIN, HOUSEKEEPING_ORIGIN } from '@/collab/constants'
 /** `yReplaceStatData` 接受宽泛 `Record`,此处收敛到 `TimelineStatData` 入参 */
 function replaceStatData(doc: YDoc, statData: TimelineStatData): void {
   yReplaceStatData(doc, statData as unknown as Record<string, unknown>)
-}
-
-/** `Timeline` → `TimelineContent`(去掉外部寻址 / 本地元数据 / 派生字段) */
-function toContent(t: Timeline): TimelineContent {
-  /* eslint-disable @typescript-eslint/no-unused-vars */
-  const {
-    id,
-    isShared,
-    everPublished,
-    hasLocalChanges,
-    serverVersion,
-    statusEvents,
-    updatedAt,
-    ...content
-  } = t
-  /* eslint-enable @typescript-eslint/no-unused-vars */
-  return { ...content, annotations: content.annotations ?? [] }
 }
 
 interface TimelineState {
@@ -93,16 +78,21 @@ interface TimelineState {
   currentTimelineWidth: number
   /** 当前视口宽度（用于缩放时计算进度） */
   currentViewportWidth: number
+  /** 远端连接状态 */
+  connectionStatus: ConnectionStatus
+  /** 是否已发布到云端 */
+  isPublished: boolean
 
   // Actions
   /** 打开一条时间轴:创建 SyncEngine,首帧投影 */
-  openTimeline: (docId: string, seedContent?: TimelineContent) => Promise<void>
-  /**
-   * 设置时间轴(兼容旧消费方的同步接口)。
-   * 内部委派给 `openTimeline`;传 null 时仅 `reset()`。
-   * 注:实际打开是异步的,投影会在 IndexedDB 就绪后流入。
-   */
-  setTimeline: (timeline: Timeline | null) => void
+  openTimeline: (
+    docId: string,
+    opts?: { seedContent?: TimelineContent; published?: boolean }
+  ) => Promise<void>
+  /** viewer 模式:直接用服务端 snapshot 只读渲染,不建引擎 */
+  setViewerSnapshot: (timeline: Timeline) => void
+  /** 原地发布升级:给当前引擎挂 remote(同 id 发布用) */
+  attachRemote: () => void
   /** 初始化小队状态 */
   initializePartyState: (composition: Composition) => void
   /** 设置副本统计数据 */
@@ -160,11 +150,7 @@ interface TimelineState {
   /** 重做 */
   redo: () => void
   /** 将本地时间轴首次发布到服务器，更新 ID 和共享状态 */
-  applyPublishResult: (newId: string, publishedAt: number, version: number) => void
-  /** 将保存更新结果写入本地状态 */
-  applyUpdateResult: (updatedAt: number, version: number) => void
-  /** 从服务器版本覆盖本地（冲突解决 - 使用服务器版本） */
-  applyServerTimeline: (response: SharedTimelineResponse) => void
+  applyPublishResult: (newId: string) => Promise<void>
   /** 重置状态 */
   reset: () => void
 }
@@ -181,11 +167,37 @@ const initialUiState = {
   currentScrollLeft: 0,
   currentTimelineWidth: 0,
   currentViewportWidth: 0,
+  connectionStatus: 'disconnected' as ConnectionStatus,
+  isPublished: false,
 }
 
 export const useTimelineStore = create<TimelineState>()((set, get) => {
   /** 每次 openTimeline 调用时递增;用于检测并发调用下的过期引擎 */
   let openGeneration = 0
+
+  /** debounced meta 写入句柄 */
+  let metaTimer: ReturnType<typeof setTimeout> | null = null
+
+  /** 把当前投影写入 IndexedDB meta 表(debounced 1s) */
+  const scheduleMetaWrite = () => {
+    if (metaTimer) clearTimeout(metaTimer)
+    metaTimer = setTimeout(() => {
+      metaTimer = null
+      const { engine, timeline, isPublished } = get()
+      if (!engine || !timeline) return
+      const meta: LocalDocMeta = {
+        docId: engine.docId,
+        name: timeline.name,
+        encounterId: timeline.encounter?.id ?? 0,
+        createdAt: timeline.createdAt,
+        updatedAt: timeline.updatedAt,
+        composition: timeline.composition ?? null,
+        published: isPublished,
+      }
+      if (timeline.fflogsSource) meta.fflogsSource = timeline.fflogsSource
+      void engine.saveMeta(meta)
+    }, 1000)
+  }
 
   /** observer:Y.Doc 变更 → 重投影(引用保持) */
   const reproject = () => {
@@ -196,12 +208,21 @@ export const useTimelineStore = create<TimelineState>()((set, get) => {
     next.id = engine.docId
     next.updatedAt = Math.floor(Date.now() / 1000)
     set({ timeline: next })
+    scheduleMetaWrite()
   }
 
   /** UndoManager 栈变化 → 同步 canUndo / canRedo */
   const syncUndoState = () => {
     const um = get().engine?.undoManager
     set({ canUndo: !!um?.canUndo(), canRedo: !!um?.canRedo() })
+  }
+
+  /** 给指定引擎挂 remote;连接状态回流到 store */
+  const wireRemote = (engine: SyncEngine) => {
+    engine.connectRemote(
+      () => useAuthStore.getState().accessToken,
+      status => set({ connectionStatus: status })
+    )
   }
 
   return {
@@ -211,7 +232,7 @@ export const useTimelineStore = create<TimelineState>()((set, get) => {
     canRedo: false,
     ...initialUiState,
 
-    openTimeline: async (docId, seedContent) => {
+    openTimeline: async (docId, opts) => {
       // Fix 1: 递增 generation,捕获当前值;await 后检测是否已被新调用抢占
       const myGeneration = ++openGeneration
 
@@ -229,8 +250,11 @@ export const useTimelineStore = create<TimelineState>()((set, get) => {
         selectedCastEventId: null,
         canUndo: false,
         canRedo: false,
+        connectionStatus: 'disconnected',
+        isPublished: !!opts?.published,
       })
 
+      const seedContent = opts?.seedContent
       // seed:若内容缺 statData,补空结构(只存用户覆盖值)
       const seedDoc =
         seedContent !== undefined
@@ -270,15 +294,42 @@ export const useTimelineStore = create<TimelineState>()((set, get) => {
       if (composition) {
         get().initializePartyState(composition)
       }
+
+      // editor 模式:挂 remote(WS 连接 → load-doc → 双向同步)
+      if (opts?.published) {
+        wireRemote(engine)
+      }
     },
 
-    setTimeline: timeline => {
-      if (!timeline) {
-        get().reset()
-        return
+    setViewerSnapshot: timeline => {
+      // viewer:无引擎,直接用服务端 snapshot 只读渲染
+      if (metaTimer) {
+        clearTimeout(metaTimer)
+        metaTimer = null
       }
-      // 委派给 openTimeline(异步;投影在 IndexedDB 就绪后流入)
-      void get().openTimeline(timeline.id, toContent(timeline))
+      const engine = get().engine
+      if (engine) {
+        engine.doc.off('update', reproject)
+        engine.destroy()
+      }
+      set({
+        engine: null,
+        timeline,
+        isPublished: true,
+        connectionStatus: 'disconnected',
+        canUndo: false,
+        canRedo: false,
+        selectedEventId: null,
+        selectedCastEventId: null,
+      })
+      if (timeline.composition) get().initializePartyState(timeline.composition)
+    },
+
+    attachRemote: () => {
+      const engine = get().engine
+      if (!engine || engine.hasRemote) return
+      set({ isPublished: true })
+      wireRemote(engine)
     },
 
     initializePartyState: composition => {
@@ -519,25 +570,21 @@ export const useTimelineStore = create<TimelineState>()((set, get) => {
       get().engine?.undoManager.redo()
     },
 
-    applyPublishResult: () => {
-      // 阶段 1:发布/版本锁模型尚未与 Y.Doc 投影模型对接(属阶段 2)。
-      // 发布的网络调用仍在 SharePopover 内完成;此处不再写本地发布元数据。
-    },
-
-    applyUpdateResult: () => {
-      // 阶段 1:同上,版本锁元数据写回属阶段 2。
-    },
-
-    applyServerTimeline: response => {
-      // 阶段 1:用服务器版本覆盖本地——重开一条 Y.Doc 投影。
-      get().setTimeline({
-        ...response.timeline,
-        statusEvents: [],
-        annotations: response.timeline.annotations ?? [],
-      })
+    applyPublishResult: async newId => {
+      // 同 id 发布:原地给当前引擎挂 remote(Y.Doc 全程连续,不重建)。
+      // id 被服务端清洗变更:由调用方 rekey IndexedDB 后 navigate 触发 EditorPage
+      // 以 editor 模式重新 openTimeline,此处不处理。
+      const engine = get().engine
+      if (engine && engine.docId === newId) {
+        get().attachRemote()
+      }
     },
 
     reset: () => {
+      if (metaTimer) {
+        clearTimeout(metaTimer)
+        metaTimer = null
+      }
       // Fix 2: 先移除 reproject 监听,再销毁引擎
       const engine = get().engine
       if (engine) {

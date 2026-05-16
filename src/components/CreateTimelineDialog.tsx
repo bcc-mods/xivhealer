@@ -9,7 +9,8 @@ import { useEffect, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { TIMELINE_NAME_MAX_LENGTH } from '@/constants/limits'
 import { toast } from 'sonner'
-import { createNewTimeline, saveTimeline } from '@/utils/timelineStorage'
+import { createNewTimeline } from '@/utils/timelineStorage'
+import { createLocalTimeline } from '@/collab/createLocalTimeline'
 import { useUIStore } from '@/store/uiStore'
 import { Modal, ModalContent, ModalHeader, ModalTitle, ModalFooter } from '@/components/ui/modal'
 import {
@@ -53,7 +54,7 @@ export default function CreateTimelineDialog({
     }
   }, [open, encounterId, queryClient])
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
 
     if (!name.trim()) {
@@ -68,12 +69,26 @@ export default function CreateTimelineDialog({
     ])
     const initialEvents = cached?.events
 
-    const timeline = createNewTimeline(encounterId, name.trim(), initialEvents)
-    saveTimeline(timeline)
+    const base = createNewTimeline(encounterId, name.trim(), initialEvents)
+    const newId = await createLocalTimeline({
+      name: base.name,
+      description: base.description,
+      encounter: base.encounter,
+      fflogsSource: base.fflogsSource,
+      gameZoneId: base.gameZoneId,
+      syncEvents: base.syncEvents,
+      isReplayMode: base.isReplayMode,
+      composition: base.composition,
+      damageEvents: base.damageEvents,
+      castEvents: base.castEvents,
+      annotations: base.annotations ?? [],
+      statData: base.statData,
+      createdAt: base.createdAt,
+    })
     useUIStore.setState({ isReadOnly: false })
     track('timeline-create', { method: 'manual', encounterId: encounterIdNum })
     onCreated()
-    window.open(`/timeline/${timeline.id}`, '_blank')
+    window.open(`/timeline/${newId}`, '_blank')
   }
 
   return (

@@ -4,11 +4,20 @@
 
 import { Trash2 } from 'lucide-react'
 import JobIcon from './JobIcon'
-import type { TimelineMetadata } from '@/utils/timelineStorage'
+import type { Composition } from '@/types/timeline'
 import { sortJobsByOrder } from '@/data/jobs'
 
+interface TimelineCardItem {
+  id: string
+  name: string
+  encounterId: string
+  createdAt: number
+  updatedAt: number
+  composition?: Composition | null
+}
+
 interface TimelineCardProps {
-  timeline: TimelineMetadata
+  timeline: TimelineCardItem
   onClick: () => void
   onDelete?: (e: React.MouseEvent) => void
 }

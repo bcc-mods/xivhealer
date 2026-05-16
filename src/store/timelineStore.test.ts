@@ -57,7 +57,7 @@ describe('timelineStore - 状态管理', () => {
     })
 
     it('openTimeline 应该自动初始化小队状态', async () => {
-      await useTimelineStore.getState().openTimeline('test-timeline', baseContent)
+      await useTimelineStore.getState().openTimeline('test-timeline', { seedContent: baseContent })
 
       const partyState = useTimelineStore.getState().partyState
       expect(partyState).toBeDefined()
@@ -66,7 +66,7 @@ describe('timelineStore - 状态管理', () => {
     })
 
     it('openTimeline 后 timeline 投影 id 为 docId', async () => {
-      await useTimelineStore.getState().openTimeline('test-timeline', baseContent)
+      await useTimelineStore.getState().openTimeline('test-timeline', { seedContent: baseContent })
       const timeline = useTimelineStore.getState().timeline
       expect(timeline?.id).toBe('test-timeline')
       expect(timeline?.name).toBe('测试时间轴')
@@ -150,7 +150,7 @@ describe('undo/redo - Y.UndoManager', () => {
   })
 
   it('应该能撤销添加伤害事件', async () => {
-    await useTimelineStore.getState().openTimeline('test-undo', baseContent)
+    await useTimelineStore.getState().openTimeline('test-undo', { seedContent: baseContent })
     const store = useTimelineStore.getState()
 
     store.addDamageEvent({
@@ -173,8 +173,10 @@ describe('undo/redo - Y.UndoManager', () => {
 
   it('应该能撤销删除技能使用事件', async () => {
     await useTimelineStore.getState().openTimeline('test-undo-cast', {
-      ...baseContent,
-      castEvents: [{ id: 'cast-1', actionId: 16536, timestamp: 5, playerId: 1 }],
+      seedContent: {
+        ...baseContent,
+        castEvents: [{ id: 'cast-1', actionId: 16536, timestamp: 5, playerId: 1 }],
+      },
     })
     const store = useTimelineStore.getState()
 
@@ -188,11 +190,13 @@ describe('undo/redo - Y.UndoManager', () => {
 
   it('应该能撤销阵容修改（含级联删除 castEvents）', async () => {
     await useTimelineStore.getState().openTimeline('test-undo-comp', {
-      ...baseContent,
-      castEvents: [
-        { id: 'cast-1', actionId: 16536, timestamp: 5, playerId: 1 },
-        { id: 'cast-2', actionId: 16534, timestamp: 10, playerId: 2 },
-      ],
+      seedContent: {
+        ...baseContent,
+        castEvents: [
+          { id: 'cast-1', actionId: 16536, timestamp: 5, playerId: 1 },
+          { id: 'cast-2', actionId: 16534, timestamp: 10, playerId: 2 },
+        ],
+      },
     })
     const store = useTimelineStore.getState()
 
@@ -208,7 +212,7 @@ describe('undo/redo - Y.UndoManager', () => {
   })
 
   it('不应该跟踪非 timeline 字段的变化', async () => {
-    await useTimelineStore.getState().openTimeline('test-ui-state', baseContent)
+    await useTimelineStore.getState().openTimeline('test-ui-state', { seedContent: baseContent })
     const store = useTimelineStore.getState()
     expect(useTimelineStore.getState().canUndo).toBe(false)
 
@@ -221,7 +225,7 @@ describe('undo/redo - Y.UndoManager', () => {
   })
 
   it('历史栈应该在 openTimeline 时清空', async () => {
-    await useTimelineStore.getState().openTimeline('test-clear', baseContent)
+    await useTimelineStore.getState().openTimeline('test-clear', { seedContent: baseContent })
     useTimelineStore.getState().addDamageEvent({
       id: 'dmg-1',
       name: '地火',
@@ -233,7 +237,7 @@ describe('undo/redo - Y.UndoManager', () => {
     expect(useTimelineStore.getState().canUndo).toBe(true)
 
     // 加载新时间轴 → 新引擎,撤销栈应该为空
-    await useTimelineStore.getState().openTimeline('new-timeline', baseContent)
+    await useTimelineStore.getState().openTimeline('new-timeline', { seedContent: baseContent })
     expect(useTimelineStore.getState().canUndo).toBe(false)
     expect(useTimelineStore.getState().canRedo).toBe(false)
   })
@@ -273,7 +277,7 @@ describe('annotation CRUD', () => {
   })
 
   it('addAnnotation 应该添加注释', async () => {
-    await useTimelineStore.getState().openTimeline('test-ann-add', baseContent)
+    await useTimelineStore.getState().openTimeline('test-ann-add', { seedContent: baseContent })
     useTimelineStore.getState().addAnnotation({
       id: 'ann-1',
       text: '注意减伤',
@@ -288,8 +292,10 @@ describe('annotation CRUD', () => {
 
   it('updateAnnotation 应该更新注释文本', async () => {
     await useTimelineStore.getState().openTimeline('test-ann-update', {
-      ...baseContent,
-      annotations: [{ id: 'ann-1', text: '旧文本', time: 10, anchor: { type: 'damageTrack' } }],
+      seedContent: {
+        ...baseContent,
+        annotations: [{ id: 'ann-1', text: '旧文本', time: 10, anchor: { type: 'damageTrack' } }],
+      },
     })
     useTimelineStore.getState().updateAnnotation('ann-1', { text: '新文本' })
     const annotation = useTimelineStore.getState().timeline!.annotations[0]
@@ -299,8 +305,10 @@ describe('annotation CRUD', () => {
 
   it('removeAnnotation 应该删除注释', async () => {
     await useTimelineStore.getState().openTimeline('test-ann-remove', {
-      ...baseContent,
-      annotations: [{ id: 'ann-1', text: '测试', time: 10, anchor: { type: 'damageTrack' } }],
+      seedContent: {
+        ...baseContent,
+        annotations: [{ id: 'ann-1', text: '测试', time: 10, anchor: { type: 'damageTrack' } }],
+      },
     })
     useTimelineStore.getState().removeAnnotation('ann-1')
     expect(useTimelineStore.getState().timeline!.annotations).toHaveLength(0)
@@ -308,22 +316,24 @@ describe('annotation CRUD', () => {
 
   it('updateComposition 应该过滤掉不在新阵容中的 skillTrack 注释', async () => {
     await useTimelineStore.getState().openTimeline('test-ann-comp', {
-      ...baseContent,
-      annotations: [
-        {
-          id: 'ann-1',
-          text: '坦克注释',
-          time: 10,
-          anchor: { type: 'skillTrack', playerId: 1, actionId: 100 },
-        },
-        {
-          id: 'ann-2',
-          text: '治疗注释',
-          time: 20,
-          anchor: { type: 'skillTrack', playerId: 2, actionId: 200 },
-        },
-        { id: 'ann-3', text: '伤害注释', time: 30, anchor: { type: 'damageTrack' } },
-      ],
+      seedContent: {
+        ...baseContent,
+        annotations: [
+          {
+            id: 'ann-1',
+            text: '坦克注释',
+            time: 10,
+            anchor: { type: 'skillTrack', playerId: 1, actionId: 100 },
+          },
+          {
+            id: 'ann-2',
+            text: '治疗注释',
+            time: 20,
+            anchor: { type: 'skillTrack', playerId: 2, actionId: 200 },
+          },
+          { id: 'ann-3', text: '伤害注释', time: 30, anchor: { type: 'damageTrack' } },
+        ],
+      },
     })
     useTimelineStore.getState().updateComposition({ players: [{ id: 2, job: 'WHM' }] })
     const annotations = useTimelineStore.getState().timeline!.annotations
@@ -332,7 +342,7 @@ describe('annotation CRUD', () => {
   })
 
   it('addAnnotation 应该支持撤销/重做', async () => {
-    await useTimelineStore.getState().openTimeline('test-ann-undo', baseContent)
+    await useTimelineStore.getState().openTimeline('test-ann-undo', { seedContent: baseContent })
     const store = useTimelineStore.getState()
     store.addAnnotation({
       id: 'ann-1',

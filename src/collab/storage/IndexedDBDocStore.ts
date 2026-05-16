@@ -85,8 +85,19 @@ export class IndexedDBDocStore {
   }
 
   /** squash:snapshot + updates → 新 snapshot,清空 updates(Task 8 完善) */
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  async squash(_docId: string): Promise<void> {
-    // Task 8 实现
+  async squash(docId: string): Promise<void> {
+    const merged = await this.loadDoc(docId)
+    if (!merged) return
+    const tx = this.tx([IDB_STORE_SNAPSHOTS, IDB_STORE_UPDATES], 'readwrite')
+    await reqToPromise(
+      tx.objectStore(IDB_STORE_SNAPSHOTS).put({
+        docId,
+        bin: merged,
+        updatedAt: Date.now(),
+      } as SnapshotRow)
+    )
+    const us = tx.objectStore(IDB_STORE_UPDATES)
+    const keys = (await reqToPromise(us.index('docId').getAllKeys(docId))) as IDBValidKey[]
+    for (const key of keys) await reqToPromise(us.delete(key))
   }
 }

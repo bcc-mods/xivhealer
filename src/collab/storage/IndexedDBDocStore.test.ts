@@ -42,4 +42,22 @@ describe('IndexedDBDocStore', () => {
     Y.applyUpdate(out, (await store.loadDoc('t1'))!)
     expect(out.getMap('meta').get('extra')).toBe(1)
   })
+
+  it('squash 后 updates 清空、内容不丢', async () => {
+    const d = new Y.Doc()
+    for (let i = 0; i < 5; i++) {
+      d.getMap('meta').set('k' + i, i)
+      await store.appendUpdate('t1', Y.encodeStateAsUpdate(d))
+    }
+    await store.squash('t1')
+    const out = new Y.Doc()
+    Y.applyUpdate(out, (await store.loadDoc('t1'))!)
+    expect(out.getMap('meta').get('k4')).toBe(4)
+    // squash 后 updates 表应为空 —— 再 append 一条,loadDoc 仍正确
+    d.getMap('meta').set('k9', 9)
+    await store.appendUpdate('t1', Y.encodeStateAsUpdate(d))
+    const out2 = new Y.Doc()
+    Y.applyUpdate(out2, (await store.loadDoc('t1'))!)
+    expect(out2.getMap('meta').get('k9')).toBe(9)
+  })
 })

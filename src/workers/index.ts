@@ -11,6 +11,7 @@ import { top100Routes } from './routes/top100'
 import { statisticsRoutes } from './routes/statistics'
 import { encounterTemplatesRoutes } from './routes/encounterTemplates'
 import { samplesQueueRoutes } from './routes/samplesQueue'
+import { internalMigrateRoutes } from './routes/internalMigrate'
 import { handleScheduled } from './scheduled'
 import { TimelineDoc } from './durable/TimelineDoc'
 
@@ -49,6 +50,7 @@ app.route('/api/top100', top100Routes)
 app.route('/api/statistics', statisticsRoutes)
 app.route('/api/encounter-templates', encounterTemplatesRoutes)
 app.route('/api/samples-queue', samplesQueueRoutes)
+app.route('/api/internal', internalMigrateRoutes)
 
 export { app }
 

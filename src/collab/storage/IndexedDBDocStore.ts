@@ -1,10 +1,13 @@
 import * as Y from 'yjs'
 import {
   IDB_NAME,
+  IDB_VERSION,
   IDB_STORE_SNAPSHOTS,
   IDB_STORE_UPDATES,
+  IDB_STORE_META,
   CLIENT_SQUASH_THRESHOLD,
 } from '../constants'
+import type { LocalDocMeta } from '../types'
 
 interface SnapshotRow {
   docId: string
@@ -30,7 +33,7 @@ export class IndexedDBDocStore {
 
   open(): Promise<void> {
     return new Promise((resolve, reject) => {
-      const req = indexedDB.open(IDB_NAME, 1)
+      const req = indexedDB.open(IDB_NAME, IDB_VERSION)
       req.onupgradeneeded = () => {
         const db = req.result
         if (!db.objectStoreNames.contains(IDB_STORE_SNAPSHOTS)) {
@@ -41,6 +44,9 @@ export class IndexedDBDocStore {
             keyPath: ['docId', 'seq'],
           })
           us.createIndex('docId', 'docId', { unique: false })
+        }
+        if (!db.objectStoreNames.contains(IDB_STORE_META)) {
+          db.createObjectStore(IDB_STORE_META, { keyPath: 'docId' })
         }
       }
       req.onsuccess = () => {
@@ -99,5 +105,57 @@ export class IndexedDBDocStore {
     const us = tx.objectStore(IDB_STORE_UPDATES)
     const keys = (await reqToPromise(us.index('docId').getAllKeys(docId))) as IDBValidKey[]
     for (const key of keys) await reqToPromise(us.delete(key))
+  }
+
+  /** 写入(或覆盖)一条 meta */
+  async putMeta(meta: LocalDocMeta): Promise<void> {
+    const tx = this.tx([IDB_STORE_META], 'readwrite')
+    await reqToPromise(tx.objectStore(IDB_STORE_META).put(meta))
+  }
+
+  /** 读一条 meta;不存在返回 null */
+  async getMeta(docId: string): Promise<LocalDocMeta | null> {
+    const tx = this.tx([IDB_STORE_META], 'readonly')
+    const row = (await reqToPromise(tx.objectStore(IDB_STORE_META).get(docId))) as
+      | LocalDocMeta
+      | undefined
+    return row ?? null
+  }
+
+  /** 读全部 meta */
+  async getAllMeta(): Promise<LocalDocMeta[]> {
+    const tx = this.tx([IDB_STORE_META], 'readonly')
+    return (await reqToPromise(tx.objectStore(IDB_STORE_META).getAll())) as LocalDocMeta[]
+  }
+
+  /** 删除一条时间轴的 snapshot + updates + meta */
+  async deleteDoc(docId: string): Promise<void> {
+    const tx = this.tx([IDB_STORE_SNAPSHOTS, IDB_STORE_UPDATES, IDB_STORE_META], 'readwrite')
+    await reqToPromise(tx.objectStore(IDB_STORE_SNAPSHOTS).delete(docId))
+    await reqToPromise(tx.objectStore(IDB_STORE_META).delete(docId))
+    const us = tx.objectStore(IDB_STORE_UPDATES)
+    const keys = (await reqToPromise(us.index('docId').getAllKeys(docId))) as IDBValidKey[]
+    for (const key of keys) await reqToPromise(us.delete(key))
+  }
+
+  /**
+   * 把一条时间轴的全部本地数据从 oldId 改键到 newId。
+   * 发布时 id 被服务端清洗变更后使用。
+   */
+  async rekey(oldId: string, newId: string): Promise<void> {
+    const merged = await this.loadDoc(oldId)
+    const meta = await this.getMeta(oldId)
+    await this.deleteDoc(oldId)
+    if (merged) {
+      const tx = this.tx([IDB_STORE_SNAPSHOTS], 'readwrite')
+      await reqToPromise(
+        tx.objectStore(IDB_STORE_SNAPSHOTS).put({
+          docId: newId,
+          bin: merged,
+          updatedAt: Date.now(),
+        })
+      )
+    }
+    if (meta) await this.putMeta({ ...meta, docId: newId })
   }
 }

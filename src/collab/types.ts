@@ -1,4 +1,4 @@
-import type { Timeline } from '@/types/timeline'
+import type { Timeline, Composition } from '@/types/timeline'
 
 /**
  * 进 Y.Doc 的协同内容 —— Timeline 去掉外部寻址 / 本地元数据 / 派生字段。
@@ -15,12 +15,25 @@ export type TimelineContent = Omit<
   | 'updatedAt'
 >
 
-/** 本地元数据 —— 不进 Y.Doc,由本地存储层管理 */
+/**
+ * 本地时间轴元数据 —— 不进 Y.Doc,由 IndexedDB `meta` 表管理。
+ * 支撑 HomePage 本地列表与 EditorPage 三模式判定。
+ */
 export interface LocalDocMeta {
-  /** 时间轴 id(外部寻址键) */
-  id: string
-  /** 是否已发布(本阶段恒为 false) */
-  published: boolean
-  /** 本地最近修改时间(Unix 秒) */
+  /** 时间轴 id(外部寻址键,也是 IndexedDB 主键) */
+  docId: string
+  /** 时间轴名称 */
+  name: string
+  /** 副本 id(0 表示未知) */
+  encounterId: number
+  /** 创建时间(Unix 秒) */
+  createdAt: number
+  /** 最近修改时间(Unix 秒) */
   updatedAt: number
+  /** 阵容(用于列表卡片职业图标);无则 null */
+  composition: Composition | null
+  /** FFLogs 来源(用于导入去重索引);无则 undefined */
+  fflogsSource?: Timeline['fflogsSource']
+  /** 是否已发布到云端 */
+  published: boolean
 }

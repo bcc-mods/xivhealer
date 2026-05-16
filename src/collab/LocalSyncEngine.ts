@@ -12,6 +12,7 @@ export class LocalSyncEngine {
   readonly undoManager: Y.UndoManager
   private readonly store: IndexedDBDocStore
   private pending: Promise<void> = Promise.resolve()
+  private lastPersistError: unknown = null
 
   private constructor(docId: string, doc: Y.Doc, store: IndexedDBDocStore) {
     this.docId = docId
@@ -56,13 +57,20 @@ export class LocalSyncEngine {
     this.pending = this.pending
       .then(() => this.store.appendUpdate(this.docId, update))
       .catch(err => {
+        this.lastPersistError = err
         console.error('[collab] persist update failed', err)
       })
   }
 
-  /** 等所有待持久化的 update 落盘 */
+  /** 等所有待持久化的 update 落盘;若期间有失败则抛出最近一次错误。 */
   flush(): Promise<void> {
-    return this.pending
+    return this.pending.then(() => {
+      if (this.lastPersistError !== null) {
+        const err = this.lastPersistError
+        this.lastPersistError = null
+        throw err
+      }
+    })
   }
 
   destroy(): void {

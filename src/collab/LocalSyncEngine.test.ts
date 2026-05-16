@@ -31,6 +31,15 @@ describe('LocalSyncEngine', () => {
     expect(projectTimeline(e2.doc).castEvents.map(c => c.id)).toEqual(['c1'])
   })
 
+  it('新建引擎不做任何编辑,seed 内容仍可持久化重开读回', async () => {
+    const e1 = await LocalSyncEngine.create('t3', buildYDoc(content))
+    await e1.flush()
+    e1.destroy()
+
+    const e2 = await LocalSyncEngine.create('t3')
+    expect(projectTimeline(e2.doc).name).toBe('eng')
+  })
+
   it('undo 撤销本地编辑', async () => {
     const e = await LocalSyncEngine.create('t2', buildYDoc(content))
     yAddCastEvent(e.doc, { id: 'c1', actionId: 1, timestamp: 1, playerId: 1 })

@@ -47,6 +47,7 @@ import type { MitigationAction } from '@/types/mitigation'
 import type { KonvaEventObject } from 'konva/lib/Node'
 import { TIMELINE_START_TIME, useCanvasColors, HP_CURVE_HEIGHT } from './constants'
 import HpCurveTrack from './HpCurveTrack'
+import { PeerOverlayFixed, PeerOverlayMain } from './PeerOverlay'
 import { formatTimeWithDecimal } from '@/utils/formatters'
 import { useSkillTracks } from '@/hooks/useSkillTracks'
 import { useFilteredTimelineView } from '@/hooks/useFilteredTimelineView'
@@ -148,6 +149,8 @@ export default function TimelineCanvas({ width, height }: TimelineCanvasProps) {
   // overlay Layer refs
   const mainOverlayLayerRef = useRef<Konva.Layer | null>(null)
   const fixedOverlayLayerRef = useRef<Konva.Layer | null>(null)
+  // 本地悬停光标节流（~50ms，避免每帧都写 awareness）
+  const lastCursorSendRef = useRef(0)
   const minimapRef = useRef<TimelineMinimapHandle | null>(null)
   const scrollbarRef = useRef<VerticalScrollbarHandle | null>(null)
 
@@ -404,6 +407,13 @@ export default function TimelineCanvas({ width, height }: TimelineCanvasProps) {
 
         hoverTimeRef.current = time
 
+        // 节流上报本地光标位置（~50ms），避免高频 awareness 写入
+        const now = Date.now()
+        if (now - lastCursorSendRef.current >= 50) {
+          lastCursorSendRef.current = now
+          useTimelineStore.getState().setLocalCursor(time)
+        }
+
         // 更新固定区域十字准线纵线
         const fixedLine = crosshairFixedLineRef.current
         if (fixedLine) {
@@ -480,9 +490,22 @@ export default function TimelineCanvas({ width, height }: TimelineCanvasProps) {
       hoverTimeRef.current = null
       hoverTrackIndexRef.current = null
       hideCrosshair()
+      // 立即清除本地光标（抑制节流，防止后续 stale mousemove 重发）
+      lastCursorSendRef.current = Date.now()
+      useTimelineStore.getState().setLocalCursor(null)
     },
     [hideCrosshair]
   )
+
+  // window blur：清除本地光标（切换标签页 / 失焦时）
+  useEffect(() => {
+    const onBlur = () => {
+      lastCursorSendRef.current = Date.now()
+      useTimelineStore.getState().setLocalCursor(null)
+    }
+    window.addEventListener('blur', onBlur)
+    return () => window.removeEventListener('blur', onBlur)
+  }, [])
 
   // 绑定十字准线鼠标事件
   useEffect(() => {
@@ -1321,6 +1344,15 @@ export default function TimelineCanvas({ width, height }: TimelineCanvasProps) {
                 listening={false}
                 visible={false}
               />
+              {/* 协作者感知：伤害事件选中高亮 + 悬停光标线 */}
+              <PeerOverlayFixed
+                zoomLevel={zoomLevel}
+                damageEvents={filteredDamageEvents}
+                damageEventRowMap={damageEventRowMap}
+                yOffset={timeRulerHeight}
+                rowHeight={LANE_ROW_HEIGHT}
+                fixedAreaHeight={fixedAreaHeight}
+              />
             </Layer>
           </Stage>
         </div>
@@ -1406,6 +1438,16 @@ export default function TimelineCanvas({ width, height }: TimelineCanvasProps) {
                 overlayLayerRef={mainOverlayLayerRef}
                 crosshairLineRef={crosshairMainLineRef}
                 trackHighlightRef={trackHighlightRef}
+                overlayChildren={
+                  <PeerOverlayMain
+                    zoomLevel={zoomLevel}
+                    castEvents={timeline.castEvents}
+                    skillTracks={skillTracks}
+                    actionMap={actionMap}
+                    trackHeight={skillTrackHeight}
+                    skillTracksHeight={skillTracksHeight}
+                  />
+                }
                 onSelectCastEvent={handleSelectCastEvent}
                 onUpdateCastEvent={handleCastEventDragEnd}
                 onContextMenu={handleContextMenu}

@@ -2,7 +2,7 @@
  * 技能轨道 Canvas 区域组件
  */
 
-import { type ReactElement, type RefObject, useMemo } from 'react'
+import { type ReactElement, type ReactNode, type RefObject, useMemo } from 'react'
 import { Group, Layer, Line, Rect, Shape, Text } from 'react-konva'
 import type Konva from 'konva'
 import AnnotationIcon from './AnnotationIcon'
@@ -58,6 +58,8 @@ interface SkillTracksCanvasProps {
   overlayLayerRef?: RefObject<Konva.Layer | null>
   crosshairLineRef?: RefObject<Konva.Line | null>
   trackHighlightRef?: RefObject<Konva.Rect | null>
+  /** 额外的 overlay 子节点（如协作者感知叠加层），渲染到 overlay Layer 中 */
+  overlayChildren?: ReactNode
   annotations: Annotation[]
   pinnedAnnotationId: string | null
   onAnnotationHover: (annotation: Annotation, screenX: number, screenY: number) => void
@@ -103,6 +105,7 @@ export default function SkillTracksCanvas({
   overlayLayerRef,
   crosshairLineRef,
   trackHighlightRef,
+  overlayChildren,
   annotations,
   pinnedAnnotationId,
   onAnnotationHover,
@@ -702,6 +705,7 @@ export default function SkillTracksCanvas({
           perfectDrawEnabled={false}
           visible={false}
         />
+        {overlayChildren}
       </Layer>
     </>
   )

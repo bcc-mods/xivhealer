@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import * as Y from 'yjs'
-import { buildYDoc } from './docSchema'
+import { buildYDoc, projectTimeline } from './docSchema'
 import { Y_MAP } from './constants'
 import type { TimelineContent } from './types'
 
@@ -31,5 +31,54 @@ describe('buildYDoc', () => {
     expect(doc.getMap(Y_MAP.castEvents).size).toBe(1)
     expect(doc.getMap(Y_MAP.annotations).size).toBe(1)
     expect((doc.getMap(Y_MAP.composition).get('1') as Y.Map<unknown>).get('job')).toBe('PLD')
+  })
+})
+
+describe('projectTimeline', () => {
+  it('round-trip:buildYDoc 后投影回等价内容', () => {
+    const doc = buildYDoc(sample)
+    const out = projectTimeline(doc)
+    expect(out.name).toBe('测试')
+    expect(out.damageEvents).toHaveLength(1)
+    expect(out.damageEvents[0]).toEqual(sample.damageEvents[0])
+    expect(out.castEvents[0]).toEqual(sample.castEvents[0])
+    expect(out.composition.players).toEqual(sample.composition.players)
+  })
+
+  it('damageEvents / castEvents 按 time 字段升序', () => {
+    const doc = buildYDoc({
+      ...sample,
+      damageEvents: [
+        { id: 'd2', name: 'B', time: 30, damage: 1, type: 'aoe', damageType: 'magical' },
+        { id: 'd1', name: 'A', time: 10, damage: 1, type: 'aoe', damageType: 'magical' },
+      ],
+    })
+    const out = projectTimeline(doc)
+    expect(out.damageEvents.map(e => e.id)).toEqual(['d1', 'd2'])
+  })
+
+  it('sanitizer:丢弃 playerId 不在 composition 内的孤儿 castEvent', () => {
+    const doc = buildYDoc(sample)
+    const orphan = new Y.Map<unknown>()
+    orphan.set('id', 'c-orphan')
+    orphan.set('actionId', 1)
+    orphan.set('timestamp', 1)
+    orphan.set('playerId', 9)
+    doc.getMap<Y.Map<unknown>>(Y_MAP.castEvents).set('c-orphan', orphan)
+    const out = projectTimeline(doc)
+    expect(out.castEvents.find(c => c.id === 'c-orphan')).toBeUndefined()
+    expect(out.castEvents).toHaveLength(1)
+  })
+
+  it('sanitizer:丢弃玩家已不在的 skillTrack 注释', () => {
+    const doc = buildYDoc(sample)
+    const orphan = new Y.Map<unknown>()
+    orphan.set('id', 'a-orphan')
+    orphan.set('text', 'x')
+    orphan.set('time', 1)
+    orphan.set('anchor', { type: 'skillTrack', playerId: 9, actionId: 1 })
+    doc.getMap<Y.Map<unknown>>(Y_MAP.annotations).set('a-orphan', orphan)
+    const out = projectTimeline(doc)
+    expect(out.annotations.find(a => a.id === 'a-orphan')).toBeUndefined()
   })
 })

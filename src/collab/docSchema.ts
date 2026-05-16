@@ -65,5 +65,67 @@ export function buildYDoc(content: TimelineContent): Y.Doc {
   return doc
 }
 
-/** 占位:供后续 task 引用,避免 import 报错 —— Task 3 替换 */
-export type { DamageEvent, CastEvent, Annotation }
+import type { Timeline, Composition } from '@/types/timeline'
+
+function ymapToObject<T>(ymap: Y.Map<unknown>): T {
+  return Object.fromEntries(ymap.entries()) as T
+}
+
+/**
+ * Y.Doc → Timeline 形状的普通对象。
+ * 读路径强制跨集合不变量(sanitizer):丢弃引用了不存在玩家的 castEvent /
+ * skillTrack 注释。见设计文档 §5.2。
+ */
+export function projectTimeline(doc: Y.Doc): Timeline {
+  const meta = doc.getMap(Y_MAP.meta)
+
+  const composition: Composition = {
+    players: [...doc.getMap<Y.Map<unknown>>(Y_MAP.composition).entries()]
+      .map(([id, pm]) => ({
+        id: Number(id),
+        job: pm.get('job') as Composition['players'][number]['job'],
+      }))
+      .sort((a, b) => a.id - b.id),
+  }
+  const playerIds = new Set(composition.players.map(p => p.id))
+
+  const damageEvents = [...doc.getMap<Y.Map<unknown>>(Y_MAP.damageEvents).values()]
+    .map(ymap => ymapToObject<DamageEvent>(ymap))
+    .sort((a, b) => a.time - b.time)
+
+  const castEvents = [...doc.getMap<Y.Map<unknown>>(Y_MAP.castEvents).values()]
+    .map(ymap => ymapToObject<CastEvent>(ymap))
+    .filter(c => playerIds.has(c.playerId)) // sanitizer:丢孤儿 cast
+    .sort((a, b) => a.timestamp - b.timestamp)
+
+  const annotations = [...doc.getMap<Y.Map<unknown>>(Y_MAP.annotations).values()]
+    .map(ymap => ymapToObject<Annotation>(ymap))
+    .filter(
+      a =>
+        a.anchor.type !== 'skillTrack' || playerIds.has((a.anchor as { playerId: number }).playerId)
+    ) // sanitizer
+
+  const statData =
+    doc.getMap(Y_MAP.statData).size > 0
+      ? ymapToObject<Timeline['statData']>(doc.getMap(Y_MAP.statData))
+      : undefined
+
+  return {
+    id: '', // 由调用方(LocalSyncEngine)用本地元数据填
+    name: (meta.get('name') as string) ?? '',
+    description: meta.get('description') as string | undefined,
+    encounter: meta.get('encounter') as Timeline['encounter'],
+    fflogsSource: meta.get('fflogsSource') as Timeline['fflogsSource'],
+    gameZoneId: meta.get('gameZoneId') as number | undefined,
+    syncEvents: meta.get('syncEvents') as Timeline['syncEvents'],
+    isReplayMode: meta.get('isReplayMode') as boolean | undefined,
+    createdAt: (meta.get('createdAt') as number) ?? 0,
+    composition,
+    damageEvents,
+    castEvents,
+    annotations,
+    statData,
+    statusEvents: [], // 派生,不进 Y.Doc;由消费方重算
+    updatedAt: 0, // 由调用方用本地元数据填
+  }
+}

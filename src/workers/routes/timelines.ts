@@ -1,164 +1,110 @@
 /// <reference types="@cloudflare/workers-types" />
-
 import { Hono } from 'hono'
 import { vValidator } from '@hono/valibot-validator'
+import * as v from 'valibot'
 import type { AppEnv } from '../env'
 import { requireAuth } from '../middleware/requireAuth'
-import { tryReadAuth } from '../middleware/tryReadAuth'
-import { CreateTimelineRequestSchema, UpdateTimelineRequestSchema } from '../timelineSchema'
-import { generateId } from '@/utils/id'
 import * as sensitiveWordFilter from '../sensitiveWordFilter'
+import type { TimelineDoc } from '../durable/TimelineDoc'
 
-const ID_GEN_MAX_ATTEMPTS = 32
+const PublishTimelineRequestSchema = v.object({
+  id: v.pipe(v.string(), v.minLength(1), v.maxLength(64)),
+  name: v.pipe(v.string(), v.maxLength(200)),
+})
 
-interface DbRow {
-  id: string
-  name: string
-  author_id: string
-  author_name: string
-  published_at: number
-  updated_at: number
-  version: number
-  content: string
-}
-
-interface SharedTimeline {
-  id: string
-  name: string
-  authorId: string
-  authorName: string
-  publishedAt: number
-  updatedAt: number
-  version: number
-  [key: string]: unknown
-}
-
-async function generateCleanId(env: AppEnv['Bindings']): Promise<string | null> {
-  for (let i = 0; i < ID_GEN_MAX_ATTEMPTS; i++) {
-    const id = generateId()
-    if (!(await sensitiveWordFilter.containsBannedSubstring(id, env))) return id
-  }
-  return null
-}
-
-function rowToSharedTimeline(row: DbRow): SharedTimeline {
-  const content = JSON.parse(row.content) as Record<string, unknown>
-  return {
-    ...content,
-    n: row.name,
-    id: row.id,
-    name: row.name,
-    authorId: row.author_id,
-    authorName: row.author_name,
-    publishedAt: row.published_at,
-    updatedAt: row.updated_at,
-    version: row.version,
-  }
+/** 取该 timeline 的 DO stub */
+function docStub(env: AppEnv['Bindings'], id: string): TimelineDoc {
+  return env.TIMELINE_DOC.get(env.TIMELINE_DOC.idFromName(id)) as unknown as TimelineDoc
 }
 
 const app = new Hono<AppEnv>()
 
-app.post('/', requireAuth, vValidator('json', CreateTimelineRequestSchema), async c => {
+// 发布:把一条本地时间轴注册为云端时间轴
+app.post('/', requireAuth, vValidator('json', PublishTimelineRequestSchema), async c => {
   const auth = c.get('auth')!
-  const { timeline } = c.req.valid('json')
-  const now = Math.floor(Date.now() / 1000)
-  const newId = await generateCleanId(c.env)
-  if (!newId) return c.json({ error: 'id_generation_failed' }, 500)
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const { n: _n, ...rest } = timeline
-  const content = JSON.stringify(rest)
+  const { id, name } = c.req.valid('json')
 
-  await c.env.healerbook_timelines
-    .prepare(
-      'INSERT INTO timelines (id, name, author_id, author_name, published_at, updated_at, version, content) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-    )
-    .bind(newId, timeline.n, auth.userId, auth.username, now, now, 1, content)
-    .run()
-
-  return c.json({ id: newId, publishedAt: now, version: 1 }, 201)
-})
-
-app.put('/:id', requireAuth, vValidator('json', UpdateTimelineRequestSchema), async c => {
-  const auth = c.get('auth')!
-  const id = c.req.param('id')
-
-  const row = await c.env.healerbook_timelines
-    .prepare('SELECT * FROM timelines WHERE id = ?')
-    .bind(id)
-    .first<DbRow>()
-
-  if (!row) return c.json({ error: 'Not found' }, 404)
-  if (row.author_id !== auth.userId) return c.json({ error: 'Forbidden' }, 403)
-
-  const { timeline, expectedVersion } = c.req.valid('json')
-  const now = Math.floor(Date.now() / 1000)
-  const newName = timeline.n ?? row.name
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const { n: _n, ...rest } = timeline
-  const content = JSON.stringify(rest)
-
-  const dbResult =
-    expectedVersion !== undefined
-      ? await c.env.healerbook_timelines
-          .prepare(
-            'UPDATE timelines SET name=?, author_name=?, updated_at=?, version=version+1, content=? WHERE id=? AND version=?'
-          )
-          .bind(newName, auth.username, now, content, id, expectedVersion)
-          .run()
-      : await c.env.healerbook_timelines
-          .prepare(
-            'UPDATE timelines SET name=?, author_name=?, updated_at=?, version=version+1, content=? WHERE id=?'
-          )
-          .bind(newName, auth.username, now, content, id)
-          .run()
-
-  if (dbResult.meta.changes === 0) {
-    return c.json(
-      { error: 'conflict', serverVersion: row.version, serverUpdatedAt: row.updated_at },
-      409
-    )
+  if (await sensitiveWordFilter.containsBannedSubstring(id, c.env)) {
+    return c.json({ error: 'id_rejected' }, 409)
   }
 
-  return c.json({ id, updatedAt: now, version: row.version + 1 })
+  const now = Math.floor(Date.now() / 1000)
+  const existing = await c.env.healerbook_timelines
+    .prepare('SELECT 1 FROM timelines WHERE id = ?')
+    .bind(id)
+    .first()
+  if (existing) return c.json({ error: 'id_taken' }, 409)
+
+  await c.env.healerbook_timelines.batch([
+    c.env.healerbook_timelines
+      .prepare(
+        'INSERT INTO timelines (id, name, author_id, author_name, published_at, updated_at, version, content) VALUES (?,?,?,?,?,?,?,?)'
+      )
+      .bind(id, name, auth.userId, auth.username, now, now, 1, '{}'),
+    c.env.healerbook_timelines
+      .prepare(
+        'INSERT OR IGNORE INTO timeline_editors (timeline_id, user_id, created_at) VALUES (?,?,?)'
+      )
+      .bind(id, auth.userId, Date.now()),
+  ])
+  return c.json({ id, publishedAt: now }, 201)
 })
 
+// 公开读:先 KV,未命中经 DO RPC
 app.get('/:id', async c => {
   const id = c.req.param('id')
+
+  // skip /connect path — handled by the next route
+  if (id === 'connect') {
+    return c.json({ error: 'Not found' }, 404)
+  }
+
+  const cached = await c.env.healerbook_snapshots.get(`tl-snapshot:${id}`)
+  if (cached) {
+    return c.json(JSON.parse(cached) as object, 200, { 'Cache-Control': 'public, max-age=60' })
+  }
   const row = await c.env.healerbook_timelines
-    .prepare('SELECT * FROM timelines WHERE id = ?')
+    .prepare('SELECT id FROM timelines WHERE id = ?')
     .bind(id)
-    .first<DbRow>()
-
+    .first()
   if (!row) return c.json({ error: 'Not found' }, 404)
-  const data = rowToSharedTimeline(row)
-
-  const auth = await tryReadAuth(c)
-  const isAuthor = !!auth && auth.userId === data.authorId
-
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const { authorId: _aid, authorName: _an, publishedAt: _pa, version: _v, ...timeline } = data
-
-  return c.json({
-    timeline,
-    authorName: data.authorName,
-    publishedAt: data.publishedAt,
-    version: data.version,
-    isAuthor,
-  })
+  const json = await docStub(c.env, id).getSnapshotJson()
+  if (!json) return c.json({ error: 'Not found' }, 404)
+  return c.json(json, 200, { 'Cache-Control': 'public, max-age=60' })
 })
 
+// WebSocket 升级:转发给 DO,注入 X-Timeline-Id
+app.get('/:id/connect', async c => {
+  if (c.req.header('Upgrade') !== 'websocket') {
+    return c.json({ error: 'expected websocket' }, 400)
+  }
+  const id = c.req.param('id')
+  // Construct a fresh request with explicit headers to avoid immutable-header issues
+  // and to strip any client-supplied X-Timeline-Id before injecting our own.
+  const fwd = new Request('https://do/connect', {
+    method: 'GET',
+    headers: {
+      Upgrade: 'websocket',
+      'X-Timeline-Id': id,
+    },
+  })
+  return docStub(c.env, id).fetch(fwd)
+})
+
+// 删除:删 D1 行 + KV + timeline_editors
 app.delete('/:id', requireAuth, async c => {
   const auth = c.get('auth')!
   const id = c.req.param('id')
-
   const result = await c.env.healerbook_timelines
     .prepare('DELETE FROM timelines WHERE id = ? AND author_id = ?')
     .bind(id, auth.userId)
     .run()
-
-  if (result.meta.changes === 0) {
-    return c.json({ error: 'Not found or forbidden' }, 404)
-  }
+  if (result.meta.changes === 0) return c.json({ error: 'Not found or forbidden' }, 404)
+  await c.env.healerbook_snapshots.delete(`tl-snapshot:${id}`)
+  await c.env.healerbook_timelines
+    .prepare('DELETE FROM timeline_editors WHERE timeline_id = ?')
+    .bind(id)
+    .run()
   return c.body(null, 204)
 })
 

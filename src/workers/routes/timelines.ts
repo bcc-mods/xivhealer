@@ -4,6 +4,7 @@ import { vValidator } from '@hono/valibot-validator'
 import * as v from 'valibot'
 import type { AppEnv } from '../env'
 import { requireAuth } from '../middleware/requireAuth'
+import { tryReadAuth } from '../middleware/tryReadAuth'
 import * as sensitiveWordFilter from '../sensitiveWordFilter'
 import type { TimelineDoc } from '../durable/TimelineDoc'
 
@@ -52,22 +53,41 @@ app.post('/', requireAuth, vValidator('json', PublishTimelineRequestSchema), asy
   return c.json({ id, publishedAt: now }, 201)
 })
 
-// 公开读:先 KV,未命中经 DO RPC
+// 公开读:返回 { role, authorName, snapshot? }
+// role=editor(登录且在白名单)→ 不带 snapshot,编辑端连 WS 取全量
+// role=viewer(其余,含未登录)→ 带 snapshot(KV 优先,未命中经 DO RPC)
 app.get('/:id', async c => {
   const id = c.req.param('id')
 
-  const cached = await c.env.healerbook_snapshots.get(`tl-snapshot:${id}`)
-  if (cached) {
-    return c.json(JSON.parse(cached) as object, 200, { 'Cache-Control': 'public, max-age=60' })
-  }
   const row = await c.env.healerbook_timelines
-    .prepare('SELECT id FROM timelines WHERE id = ?')
+    .prepare('SELECT author_name FROM timelines WHERE id = ?')
     .bind(id)
-    .first()
+    .first<{ author_name: string }>()
   if (!row) return c.json({ error: 'Not found' }, 404)
-  const json = await docStub(c.env, id).getSnapshotJson()
-  if (!json) return c.json({ error: 'Not found' }, 404)
-  return c.json(json, 200, { 'Cache-Control': 'public, max-age=60' })
+
+  const user = await tryReadAuth(c)
+  let role: 'editor' | 'viewer' = 'viewer'
+  if (user) {
+    const editorRow = await c.env.healerbook_timelines
+      .prepare('SELECT 1 FROM timeline_editors WHERE timeline_id = ? AND user_id = ?')
+      .bind(id, user.userId)
+      .first()
+    if (editorRow) role = 'editor'
+  }
+
+  if (role === 'editor') {
+    return c.json({ role, authorName: row.author_name })
+  }
+
+  // viewer:需要 snapshot
+  const cached = await c.env.healerbook_snapshots.get(`tl-snapshot:${id}`)
+  const snapshot = cached
+    ? (JSON.parse(cached) as object)
+    : await docStub(c.env, id).getSnapshotJson()
+  if (!snapshot) return c.json({ error: 'Not found' }, 404)
+  return c.json({ role, authorName: row.author_name, snapshot }, 200, {
+    'Cache-Control': 'public, max-age=60',
+  })
 })
 
 // WebSocket 升级:转发给 DO,注入 X-Timeline-Id

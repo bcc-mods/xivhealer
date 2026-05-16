@@ -2,7 +2,7 @@
 import { DurableObject } from 'cloudflare:workers'
 import type { Env } from '../env'
 import { DoSqlStore } from '../collab/doSqlStore'
-import { decodeMessage, encodeLoadReply, encodeMessage, MSG } from '../collab/syncProtocol'
+import { decodeMessage, encodeLoadReply, encodeMessage, MSG } from '@/collab/syncProtocol'
 import * as Y from 'yjs'
 import { encodeStateVectorFromUpdate, diffUpdate } from 'yjs'
 import { verifyToken } from '../jwt'

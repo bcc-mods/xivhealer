@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { env, runDurableObjectAlarm, runInDurableObject } from 'cloudflare:test'
 import * as Y from 'yjs'
 import { signAccessToken } from '@/workers/jwt'
-import { encodeMessage, MSG, decodeMessage, decodeLoadReply } from '@/workers/collab/syncProtocol'
+import { encodeMessage, MSG, decodeMessage, decodeLoadReply } from '@/collab/syncProtocol'
 
 describe('TimelineDoc WebSocket 接入', () => {
   it('/connect 返回 101 并升级为 WebSocket', async () => {

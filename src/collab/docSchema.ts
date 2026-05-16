@@ -1,7 +1,7 @@
 import * as Y from 'yjs'
 import { Y_MAP, LOCAL_ORIGIN } from './constants'
 import type { TimelineContent } from './types'
-import type { DamageEvent, CastEvent, Annotation } from '@/types/timeline'
+import type { DamageEvent, CastEvent, Annotation, Timeline, Composition } from '@/types/timeline'
 
 /** meta Map 里存放的标量字段名 */
 const META_KEYS = [
@@ -64,8 +64,6 @@ export function buildYDoc(content: TimelineContent): Y.Doc {
   }, LOCAL_ORIGIN)
   return doc
 }
-
-import type { Timeline, Composition } from '@/types/timeline'
 
 function ymapToObject<T>(ymap: Y.Map<unknown>): T {
   return Object.fromEntries(ymap.entries()) as T

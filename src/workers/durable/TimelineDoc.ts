@@ -141,8 +141,25 @@ export class TimelineDoc extends DurableObject<Env> {
     }
   }
 
+  private static readonly SQUASH_SOFT = 50
+  private static readonly SQUASH_HARD = 200
+  private static readonly SQUASH_DEBOUNCE_MS = 10_000
+
+  /** 每次 push 后调用:按 updates 条数调度 squash */
   private async scheduleSquash(): Promise<void> {
-    // Task A8 实现
+    const count = this.store.countUpdates()
+    if (count >= TimelineDoc.SQUASH_HARD) {
+      await this.ctx.storage.setAlarm(Date.now())
+    } else if (count >= TimelineDoc.SQUASH_SOFT) {
+      await this.ctx.storage.setAlarm(Date.now() + TimelineDoc.SQUASH_DEBOUNCE_MS)
+    }
+  }
+
+  /** alarm 到点:执行 squash */
+  override async alarm(): Promise<void> {
+    if (this.store.countUpdates() > 0) {
+      this.store.squash()
+    }
   }
 
   /** 该 DO 对应的 timelineId —— 由 Worker 在转发 /connect 时经 header 注入 */

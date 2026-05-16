@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { env } from 'cloudflare:test'
+import { env, runDurableObjectAlarm, runInDurableObject } from 'cloudflare:test'
 import * as Y from 'yjs'
 import { signAccessToken } from '@/workers/jwt'
 import { encodeMessage, MSG, decodeMessage, decodeLoadReply } from '@/workers/collab/syncProtocol'
@@ -91,6 +91,25 @@ describe('TimelineDoc WebSocket 接入', () => {
     await ok
     return ws
   }
+
+  it('alarm 触发 squash 后 updates 清空', async () => {
+    const docName = 't-squash-1'
+    const ws = await authConnect(docName, 'us')
+    const doc = new Y.Doc()
+    doc.getMap('m').set('v', 1)
+    ws.send(encodeMessage(MSG.PUSH, Y.encodeStateAsUpdate(doc)))
+    await new Promise(r => setTimeout(r, 50))
+
+    const stub = env.TIMELINE_DOC.get(env.TIMELINE_DOC.idFromName(docName))
+    await runInDurableObject(stub, async (_instance, state) => {
+      await state.storage.setAlarm(Date.now())
+    })
+    await runDurableObjectAlarm(stub)
+    await runInDurableObject(stub, async (_i, state) => {
+      const n = state.storage.sql.exec('SELECT COUNT(*) AS n FROM updates').one().n
+      expect(Number(n)).toBe(0)
+    })
+  })
 
   it('LOAD 返回 LOAD_REPLY;PUSH 广播给其他连接', async () => {
     const docName = 't-sync-1'

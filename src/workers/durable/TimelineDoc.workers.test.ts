@@ -111,6 +111,30 @@ describe('TimelineDoc WebSocket 接入', () => {
     })
   })
 
+  it('seed 灌入初始数据,getSnapshotJson 投影回 Timeline', async () => {
+    const docName = 't-rpc-1'
+    const seedDoc = new Y.Doc()
+    seedDoc.getMap('meta').set('name', 'SeededTL')
+    const stub = env.TIMELINE_DOC.get(env.TIMELINE_DOC.idFromName(docName))
+    await stub.seed(Y.encodeStateAsUpdate(seedDoc))
+    const json = await stub.getSnapshotJson()
+    expect(json).not.toBeNull()
+    expect(json!.name).toBe('SeededTL')
+  })
+
+  it('seed 幂等:第二次 seed 不覆盖', async () => {
+    const docName = 't-rpc-2'
+    const stub = env.TIMELINE_DOC.get(env.TIMELINE_DOC.idFromName(docName))
+    const d1 = new Y.Doc()
+    d1.getMap('meta').set('name', 'First')
+    await stub.seed(Y.encodeStateAsUpdate(d1))
+    const d2 = new Y.Doc()
+    d2.getMap('meta').set('name', 'Second')
+    await stub.seed(Y.encodeStateAsUpdate(d2))
+    const json = await stub.getSnapshotJson()
+    expect(json!.name).toBe('First')
+  })
+
   it('LOAD 返回 LOAD_REPLY;PUSH 广播给其他连接', async () => {
     const docName = 't-sync-1'
     const wsA = await authConnect(docName, 'ua')

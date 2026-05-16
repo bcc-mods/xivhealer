@@ -3,8 +3,11 @@ import { DurableObject } from 'cloudflare:workers'
 import type { Env } from '../env'
 import { DoSqlStore } from '../collab/doSqlStore'
 import { decodeMessage, encodeLoadReply, encodeMessage, MSG } from '../collab/syncProtocol'
+import * as Y from 'yjs'
 import { encodeStateVectorFromUpdate, diffUpdate } from 'yjs'
 import { verifyToken } from '../jwt'
+import { projectTimeline } from '@/collab/docSchema'
+import type { Timeline } from '@/types/timeline'
 
 /** 挂在每个 WebSocket 上的鉴权状态(扛 hibernation) */
 interface SocketAttachment {
@@ -155,10 +158,37 @@ export class TimelineDoc extends DurableObject<Env> {
     }
   }
 
+  /** 迁移脚本用:灌入初始全量 snapshot,幂等(已有数据则跳过) */
+  async seed(bin: Uint8Array): Promise<void> {
+    if (!this.store.isEmpty()) return
+    this.store.seedSnapshot(bin)
+  }
+
+  /** 公开读用:把当前合并状态投影成 Timeline JSON;空文档返回 null */
+  async getSnapshotJson(): Promise<Timeline | null> {
+    if (this.store.isEmpty()) return null
+    const doc = new Y.Doc()
+    Y.applyUpdate(doc, this.store.getMergedDoc())
+    return projectTimeline(doc)
+  }
+
   /** alarm 到点:执行 squash */
   override async alarm(): Promise<void> {
     if (this.store.countUpdates() > 0) {
       this.store.squash()
+    }
+    await this.writeSnapshotCache()
+  }
+
+  /** squash 后把投影 JSON 写入 KV 公开读缓存 */
+  private async writeSnapshotCache(): Promise<void> {
+    if (!this.cachedDocId) return
+    const json = await this.getSnapshotJson()
+    if (json) {
+      await this.env.healerbook_snapshots.put(
+        `tl-snapshot:${this.cachedDocId}`,
+        JSON.stringify(json)
+      )
     }
   }
 

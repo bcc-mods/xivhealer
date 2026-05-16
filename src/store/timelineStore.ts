@@ -23,6 +23,8 @@ import { SyncEngine } from '@/collab/SyncEngine'
 import type { ConnectionStatus } from '@/collab/RemoteConnection'
 import type { LocalDocMeta } from '@/collab/types'
 import { useAuthStore } from '@/store/authStore'
+import type { PeerState, AwarenessState } from '@/collab/awarenessTypes'
+import { colorForUser, displayName } from '@/collab/awarenessIdentity'
 import type { Doc as YDoc } from 'yjs'
 import {
   buildYDoc,
@@ -82,6 +84,8 @@ interface TimelineState {
   connectionStatus: ConnectionStatus
   /** 是否已发布到云端 */
   isPublished: boolean
+  /** 其他协作者的 awareness(已排除自身);非 editor 模式恒为空 */
+  peers: PeerState[]
 
   // Actions
   /** 打开一条时间轴:创建 SyncEngine,首帧投影 */
@@ -153,6 +157,10 @@ interface TimelineState {
   applyPublishResult: (newId: string) => Promise<void>
   /** 重置状态 */
   reset: () => void
+  /** 设本地悬停光标时间(秒);离开画布传 null */
+  setLocalCursor: (time: number | null) => void
+  /** 设本地拖动 ghost;拖动结束传 null */
+  setLocalDragging: (dragging: AwarenessState['dragging']) => void
 }
 
 /** UI 态 / 运行时态初值(不含 engine / timeline) */
@@ -169,6 +177,7 @@ const initialUiState = {
   currentViewportWidth: 0,
   connectionStatus: 'disconnected' as ConnectionStatus,
   isPublished: false,
+  peers: [] as PeerState[],
 }
 
 export const useTimelineStore = create<TimelineState>()((set, get) => {
@@ -177,6 +186,9 @@ export const useTimelineStore = create<TimelineState>()((set, get) => {
 
   /** debounced meta 写入句柄 */
   let metaTimer: ReturnType<typeof setTimeout> | null = null
+
+  /** awareness 'change' 订阅的取消句柄 */
+  let peersUnsub: (() => void) | null = null
 
   /** 把当前投影写入 IndexedDB meta 表(debounced 1s) */
   const scheduleMetaWrite = () => {
@@ -217,12 +229,47 @@ export const useTimelineStore = create<TimelineState>()((set, get) => {
     set({ canUndo: !!um?.canUndo(), canRedo: !!um?.canRedo() })
   }
 
+  /** 把 awareness.getStates() 投影成 peers(排除自身) */
+  const reprojectPeers = (engine: SyncEngine) => {
+    const { awareness } = engine
+    const self = awareness.clientID
+    const peers: PeerState[] = []
+    for (const [clientId, state] of awareness.getStates()) {
+      if (clientId === self) continue
+      const s = state as Partial<AwarenessState>
+      if (!s.user) continue // 尚未设 user 的连接跳过
+      peers.push({
+        clientId,
+        user: s.user,
+        selection: s.selection ?? { eventId: null, castEventId: null },
+        cursorTime: s.cursorTime ?? null,
+        dragging: s.dragging ?? null,
+      })
+    }
+    set({ peers })
+  }
+
   /** 给指定引擎挂 remote;连接状态回流到 store */
   const wireRemote = (engine: SyncEngine) => {
     engine.connectRemote(
       () => useAuthStore.getState().accessToken,
       status => set({ connectionStatus: status })
     )
+    // 设本地 awareness user(昵称 + 颜色),并订阅 peers 变化
+    const auth = useAuthStore.getState()
+    const uid = auth.userId ?? ''
+    engine.awareness.setLocalStateField('user', {
+      id: uid,
+      name: displayName(auth.username, uid),
+      color: colorForUser(uid),
+    })
+    engine.awareness.setLocalStateField('selection', { eventId: null, castEventId: null })
+    engine.awareness.setLocalStateField('cursorTime', null)
+    engine.awareness.setLocalStateField('dragging', null)
+    const onPeersChange = () => reprojectPeers(engine)
+    engine.awareness.on('change', onPeersChange)
+    peersUnsub = () => engine.awareness.off('change', onPeersChange)
+    reprojectPeers(engine)
   }
 
   return {
@@ -240,6 +287,8 @@ export const useTimelineStore = create<TimelineState>()((set, get) => {
       const prevEngine = get().engine
       if (prevEngine) {
         prevEngine.doc.off('update', reproject)
+        peersUnsub?.()
+        peersUnsub = null
         prevEngine.destroy()
       }
       // 切换时间轴:先清空旧投影与选择态,避免渲染到旧数据
@@ -252,6 +301,7 @@ export const useTimelineStore = create<TimelineState>()((set, get) => {
         canRedo: false,
         connectionStatus: 'disconnected',
         isPublished: !!opts?.published,
+        peers: [],
       })
 
       const seedContent = opts?.seedContent
@@ -310,6 +360,8 @@ export const useTimelineStore = create<TimelineState>()((set, get) => {
       const engine = get().engine
       if (engine) {
         engine.doc.off('update', reproject)
+        peersUnsub?.()
+        peersUnsub = null
         engine.destroy()
       }
       set({
@@ -321,6 +373,7 @@ export const useTimelineStore = create<TimelineState>()((set, get) => {
         canRedo: false,
         selectedEventId: null,
         selectedCastEventId: null,
+        peers: [],
       })
       if (timeline.composition) get().initializePartyState(timeline.composition)
     },
@@ -398,17 +451,15 @@ export const useTimelineStore = create<TimelineState>()((set, get) => {
       set({ partyState: newPartyState })
     },
 
-    selectEvent: eventId =>
-      set({
-        selectedEventId: eventId,
-        selectedCastEventId: null,
-      }),
+    selectEvent: eventId => {
+      set({ selectedEventId: eventId, selectedCastEventId: null })
+      get().engine?.awareness.setLocalStateField('selection', { eventId, castEventId: null })
+    },
 
-    selectCastEvent: castEventId =>
-      set({
-        selectedCastEventId: castEventId,
-        selectedEventId: null,
-      }),
+    selectCastEvent: castEventId => {
+      set({ selectedCastEventId: castEventId, selectedEventId: null })
+      get().engine?.awareness.setLocalStateField('selection', { eventId: null, castEventId })
+    },
 
     setCurrentTime: time =>
       set({
@@ -580,6 +631,18 @@ export const useTimelineStore = create<TimelineState>()((set, get) => {
       }
     },
 
+    setLocalCursor: time => {
+      const engine = get().engine
+      if (!engine) return
+      engine.awareness.setLocalStateField('cursorTime', time)
+    },
+
+    setLocalDragging: dragging => {
+      const engine = get().engine
+      if (!engine) return
+      engine.awareness.setLocalStateField('dragging', dragging)
+    },
+
     reset: () => {
       if (metaTimer) {
         clearTimeout(metaTimer)
@@ -589,6 +652,8 @@ export const useTimelineStore = create<TimelineState>()((set, get) => {
       const engine = get().engine
       if (engine) {
         engine.doc.off('update', reproject)
+        peersUnsub?.()
+        peersUnsub = null
         engine.destroy()
       }
       set({ engine: null, timeline: null, canUndo: false, canRedo: false, ...initialUiState })

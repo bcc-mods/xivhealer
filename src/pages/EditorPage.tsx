@@ -37,6 +37,7 @@ import FullScreenLoader from '@/components/FullScreenLoader'
 import { Button } from '@/components/ui/button'
 import { APP_NAME } from '@/lib/constants'
 import ThemeToggle from '@/components/ThemeToggle'
+import PresenceAvatars from '@/components/PresenceAvatars'
 import { track } from '@/utils/analytics'
 
 type PageMode = 'local' | 'editor' | 'viewer' | 'loading' | 'not_found' | 'network_error'
@@ -335,7 +336,8 @@ export default function EditorPage() {
             </div>
           )}
 
-          <div className="ml-auto">
+          <div className="ml-auto flex items-center gap-3">
+            <PresenceAvatars />
             <ThemeToggle />
           </div>
         </div>

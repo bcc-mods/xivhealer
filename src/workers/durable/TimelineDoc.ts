@@ -2,7 +2,8 @@
 import { DurableObject } from 'cloudflare:workers'
 import type { Env } from '../env'
 import { DoSqlStore } from '../collab/doSqlStore'
-import { decodeMessage, encodeMessage, MSG } from '../collab/syncProtocol'
+import { decodeMessage, encodeLoadReply, encodeMessage, MSG } from '../collab/syncProtocol'
+import { encodeStateVectorFromUpdate, diffUpdate } from 'yjs'
 import { verifyToken } from '../jwt'
 
 /** 挂在每个 WebSocket 上的鉴权状态(扛 hibernation) */
@@ -81,9 +82,24 @@ export class TimelineDoc extends DurableObject<Env> {
       await this.handleAuth(ws, payload)
       return
     }
-    // 已鉴权 —— LOAD / PUSH / AWARENESS 在 Task A7 实现
-    void type
-    void payload
+    // 已鉴权
+    if (type === MSG.LOAD) {
+      const full = this.store.getMergedDoc()
+      const missing = payload.length > 0 ? diffUpdate(full, payload) : full
+      const sv = encodeStateVectorFromUpdate(full)
+      ws.send(encodeMessage(MSG.LOAD_REPLY, encodeLoadReply(missing, sv)))
+      return
+    }
+    if (type === MSG.PUSH) {
+      this.store.appendUpdate(payload) // 先落库
+      this.broadcast(ws, encodeMessage(MSG.BROADCAST, payload)) // 再广播
+      await this.scheduleSquash() // Task A8
+      return
+    }
+    if (type === MSG.AWARENESS) {
+      this.broadcast(ws, encodeMessage(MSG.AWARENESS, payload)) // 仅转发
+      return
+    }
   }
 
   private async handleAuth(ws: WebSocket, payload: Uint8Array): Promise<void> {
@@ -109,6 +125,24 @@ export class TimelineDoc extends DurableObject<Env> {
     }
     ws.serializeAttachment({ authed: true, userId } satisfies SocketAttachment)
     ws.send(encodeMessage(MSG.AUTH_OK, new Uint8Array()))
+  }
+
+  /** 把 frame 发给除 sender 外的所有已鉴权连接 */
+  private broadcast(sender: WebSocket, frame: Uint8Array): void {
+    for (const ws of this.ctx.getWebSockets()) {
+      if (ws === sender) continue
+      const att = (ws.deserializeAttachment() ?? { authed: false }) as SocketAttachment
+      if (!att.authed) continue
+      try {
+        ws.send(frame)
+      } catch {
+        // 发送失败的连接忽略，由运行时清理
+      }
+    }
+  }
+
+  private async scheduleSquash(): Promise<void> {
+    // Task A8 实现
   }
 
   /** 该 DO 对应的 timelineId —— 由 Worker 在转发 /connect 时经 header 注入 */

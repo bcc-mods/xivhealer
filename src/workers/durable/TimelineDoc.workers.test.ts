@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import { env } from 'cloudflare:test'
+import * as Y from 'yjs'
 import { signAccessToken } from '@/workers/jwt'
-import { encodeMessage, MSG } from '@/workers/collab/syncProtocol'
+import { encodeMessage, MSG, decodeMessage, decodeLoadReply } from '@/workers/collab/syncProtocol'
 
 describe('TimelineDoc WebSocket 接入', () => {
   it('/connect 返回 101 并升级为 WebSocket', async () => {
@@ -67,5 +68,62 @@ describe('TimelineDoc WebSocket 接入', () => {
     ws.send(encodeMessage(MSG.PUSH, new Uint8Array([1])))
     await closed
     expect(true).toBe(true)
+  })
+
+  async function authConnect(docName: string, userId: string) {
+    await env.healerbook_timelines
+      .prepare(
+        'INSERT OR IGNORE INTO timeline_editors (timeline_id, user_id, created_at) VALUES (?,?,?)'
+      )
+      .bind(docName, userId, Date.now())
+      .run()
+    const jwt = await signAccessToken(userId, userId, 'test-secret')
+    const ws = await connect(docName)
+    const ok = new Promise<void>(resolve => {
+      ws.addEventListener('message', function h(e) {
+        if (new Uint8Array((e as MessageEvent).data as ArrayBuffer)[0] === MSG.AUTH_OK) {
+          ws.removeEventListener('message', h)
+          resolve()
+        }
+      })
+    })
+    ws.send(encodeMessage(MSG.AUTH, new TextEncoder().encode(jwt)))
+    await ok
+    return ws
+  }
+
+  it('LOAD 返回 LOAD_REPLY;PUSH 广播给其他连接', async () => {
+    const docName = 't-sync-1'
+    const wsA = await authConnect(docName, 'ua')
+    const wsB = await authConnect(docName, 'ub')
+
+    const doc = new Y.Doc()
+    doc.getMap('m').set('x', 42)
+    const update = Y.encodeStateAsUpdate(doc)
+
+    const broadcastToB = new Promise<Uint8Array>(resolve => {
+      wsB.addEventListener('message', e => {
+        const f = decodeMessage(new Uint8Array((e as MessageEvent).data as ArrayBuffer))
+        if (f.type === MSG.BROADCAST) resolve(f.payload)
+      })
+    })
+    wsA.send(encodeMessage(MSG.PUSH, update))
+    const broadcasted = await broadcastToB
+    const check = new Y.Doc()
+    Y.applyUpdate(check, broadcasted)
+    expect(check.getMap('m').get('x')).toBe(42)
+
+    const wsC = await authConnect(docName, 'uc')
+    const loadReply = new Promise<Uint8Array>(resolve => {
+      wsC.addEventListener('message', e => {
+        const f = decodeMessage(new Uint8Array((e as MessageEvent).data as ArrayBuffer))
+        if (f.type === MSG.LOAD_REPLY) resolve(f.payload)
+      })
+    })
+    wsC.send(encodeMessage(MSG.LOAD, Y.encodeStateVector(new Y.Doc())))
+    const { missing } = decodeLoadReply(await loadReply)
+    const loaded = new Y.Doc()
+    Y.applyUpdate(loaded, missing)
+    expect(loaded.getMap('m').get('x')).toBe(42)
   })
 })

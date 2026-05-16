@@ -32,5 +32,5 @@
     "noUncheckedSideEffectImports": true
   },
   "include": ["src"],
-  "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx", "3rdparty"]
+  "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx", "src/**/*.workers.setup.ts", "3rdparty"]
 }

@@ -2,7 +2,8 @@
 import { DurableObject } from 'cloudflare:workers'
 import type { Env } from '../env'
 import { DoSqlStore } from '../collab/doSqlStore'
-import { decodeMessage } from '../collab/syncProtocol'
+import { decodeMessage, encodeMessage, MSG } from '../collab/syncProtocol'
+import { verifyToken } from '../jwt'
 
 /** 挂在每个 WebSocket 上的鉴权状态(扛 hibernation) */
 interface SocketAttachment {
@@ -12,6 +13,7 @@ interface SocketAttachment {
 
 export class TimelineDoc extends DurableObject<Env> {
   private readonly store: DoSqlStore
+  private cachedDocId: string | undefined
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env)
@@ -28,6 +30,11 @@ export class TimelineDoc extends DurableObject<Env> {
     if (request.headers.get('Upgrade') !== 'websocket') {
       return new Response('expected websocket', { status: 400 })
     }
+    const timelineId = request.headers.get('X-Timeline-Id')
+    if (!timelineId) {
+      return new Response('missing timeline id', { status: 400 })
+    }
+    this.cachedDocId = timelineId
     const pair = new WebSocketPair()
     const client = pair[0]
     const server = pair[1]
@@ -60,16 +67,52 @@ export class TimelineDoc extends DurableObject<Env> {
     void ws
   }
 
-  /** 消息分发 —— 鉴权/同步处理在 Task A6–A7 填充 */
   private async dispatch(
     ws: WebSocket,
     att: SocketAttachment,
     type: number,
     payload: Uint8Array
   ): Promise<void> {
-    void att
+    if (!att.authed) {
+      if (type !== MSG.AUTH) {
+        ws.close(1008, 'auth required')
+        return
+      }
+      await this.handleAuth(ws, payload)
+      return
+    }
+    // 已鉴权 —— LOAD / PUSH / AWARENESS 在 Task A7 实现
     void type
     void payload
-    ws.close(1011, 'not implemented')
+  }
+
+  private async handleAuth(ws: WebSocket, payload: Uint8Array): Promise<void> {
+    const secret = this.env.JWT_SECRET
+    if (!secret) {
+      ws.close(1011, 'server misconfigured')
+      return
+    }
+    const jwt = new TextDecoder().decode(payload)
+    const result = await verifyToken(jwt, secret)
+    if (!result.ok || !result.payload.sub) {
+      ws.close(1008, 'invalid token')
+      return
+    }
+    const userId = result.payload.sub
+    const row = await this.env.healerbook_timelines
+      .prepare('SELECT 1 FROM timeline_editors WHERE timeline_id = ? AND user_id = ?')
+      .bind(this.docId(), userId)
+      .first()
+    if (!row) {
+      ws.close(1008, 'not an editor')
+      return
+    }
+    ws.serializeAttachment({ authed: true, userId } satisfies SocketAttachment)
+    ws.send(encodeMessage(MSG.AUTH_OK, new Uint8Array()))
+  }
+
+  /** 该 DO 对应的 timelineId —— 由 Worker 在转发 /connect 时经 header 注入 */
+  private docId(): string {
+    return this.cachedDocId ?? ''
   }
 }

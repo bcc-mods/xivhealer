@@ -254,6 +254,32 @@ describe('TimelineDoc WebSocket 接入', () => {
     })
   })
 
+  it('kickUser 用 4001 关闭目标用户连接,不影响他人', async () => {
+    const docName = 't-kick-1'
+    const wsA = await authConnect(docName, 'kick-a')
+    const wsB = await authConnect(docName, 'kick-b')
+    const closedA = new Promise<CloseEvent>(resolve => {
+      wsA.addEventListener('close', e => resolve(e as CloseEvent), { once: true })
+    })
+    const stub = env.TIMELINE_DOC.get(env.TIMELINE_DOC.idFromName(docName))
+    await runInDurableObject(stub, async instance => {
+      await instance.kickUser('kick-a')
+    })
+    const ev = await closedA
+    expect(ev.code).toBe(4001)
+    expect(wsB.readyState).toBe(WebSocket.OPEN)
+  })
+
+  it('kickUser 对不在线用户为 no-op', async () => {
+    const docName = 't-kick-2'
+    const wsA = await authConnect(docName, 'kick-online')
+    const stub = env.TIMELINE_DOC.get(env.TIMELINE_DOC.idFromName(docName))
+    await runInDurableObject(stub, async instance => {
+      await instance.kickUser('nobody-here')
+    })
+    expect(wsA.readyState).toBe(WebSocket.OPEN)
+  })
+
   it('LOAD 返回 LOAD_REPLY;PUSH 广播给其他连接', async () => {
     const docName = 't-sync-1'
     const wsA = await authConnect(docName, 'ua')

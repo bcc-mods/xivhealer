@@ -184,6 +184,23 @@ export class TimelineDoc extends DurableObject<Env> {
   }
 
   /**
+   * Worker 在移除编辑者后调用:断开该用户的所有连接。
+   * 用应用自定义 close code 4001(区别于握手期的 1008),客户端据此切只读。
+   */
+  async kickUser(userId: string): Promise<void> {
+    for (const ws of this.ctx.getWebSockets()) {
+      const att = (ws.deserializeAttachment() ?? { authed: false }) as SocketAttachment
+      if (att.authed && att.userId === userId) {
+        try {
+          ws.close(4001, 'editor revoked')
+        } catch {
+          // 已关闭的连接忽略
+        }
+      }
+    }
+  }
+
+  /**
    * 取消发布时调用:断开所有在线连接并清空文档存储。
    * DO 由 `idFromName` 取得会被复用 —— 不清空则同 id 重新发布会复活旧内容。
    */

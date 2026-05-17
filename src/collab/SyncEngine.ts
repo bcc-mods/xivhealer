@@ -64,13 +64,16 @@ export class SyncEngine {
   }
 
   /** 挂上远端连接(发布 / editor 模式)。幂等。 */
-  connectRemote(getJwt: () => string | null, onStatus: (status: ConnectionStatus) => void): void {
+  connectRemote(
+    getAuthToken: () => Promise<string | null>,
+    onStatus: (status: ConnectionStatus) => void
+  ): void {
     if (this.remote) return
     this.remote = new RemoteConnection(
       buildWsUrl(this.docId),
       this.doc,
       this.awareness,
-      getJwt,
+      getAuthToken,
       onStatus
     )
     this.remote.connect()

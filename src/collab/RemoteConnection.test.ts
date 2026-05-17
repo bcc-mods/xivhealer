@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import * as Y from 'yjs'
 import { Awareness, encodeAwarenessUpdate } from 'y-protocols/awareness'
 import { RemoteConnection } from './RemoteConnection'
@@ -12,9 +12,9 @@ class FakeWebSocket {
   readyState = 0
   binaryType = ''
   sent: Uint8Array[] = []
-  onopen: (() => void) | null = null
+  onopen: (() => void | Promise<void>) | null = null
   onmessage: ((ev: { data: ArrayBuffer }) => void) | null = null
-  onclose: (() => void) | null = null
+  onclose: ((ev: { code: number }) => void) | null = null
   onerror: (() => void) | null = null
   constructor(public url: string) {
     FakeWebSocket.instances.push(this)
@@ -24,16 +24,20 @@ class FakeWebSocket {
   }
   close() {
     this.readyState = FakeWebSocket.CLOSED
-    this.onclose?.()
+    this.onclose?.({ code: 1000 })
   }
-  fireOpen() {
+  async fireOpen() {
     this.readyState = FakeWebSocket.OPEN
-    this.onopen?.()
+    await this.onopen?.()
   }
   fireMessage(frame: Uint8Array) {
     this.onmessage?.({
       data: frame.buffer.slice(frame.byteOffset, frame.byteOffset + frame.byteLength),
     })
+  }
+  fireClose(code: number) {
+    this.readyState = FakeWebSocket.CLOSED
+    this.onclose?.({ code })
   }
 }
 
@@ -42,47 +46,51 @@ beforeEach(() => {
   vi.stubGlobal('WebSocket', FakeWebSocket)
 })
 
+afterEach(() => {
+  vi.useRealTimers()
+})
+
 function lastSocket() {
   return FakeWebSocket.instances[FakeWebSocket.instances.length - 1]
 }
 
 describe('RemoteConnection', () => {
-  it('sends AUTH on open', () => {
+  it('sends AUTH on open', async () => {
     const doc = new Y.Doc()
     const conn = new RemoteConnection(
       'ws://x/connect',
       doc,
       new Awareness(doc),
-      () => 'jwt-abc',
+      () => Promise.resolve('jwt-abc'),
       () => {}
     )
     conn.connect()
-    lastSocket().fireOpen()
+    await lastSocket().fireOpen()
     const frame = decodeMessage(lastSocket().sent[0])
     expect(frame.type).toBe(MSG.AUTH)
     expect(new TextDecoder().decode(frame.payload)).toBe('jwt-abc')
     conn.destroy()
   })
 
-  it('sends LOAD after AUTH_OK and reports connected', () => {
+  it('sends LOAD after AUTH_OK and reports connected', async () => {
     const doc = new Y.Doc()
     const statuses: string[] = []
     const conn = new RemoteConnection(
       'ws://x/connect',
       doc,
       new Awareness(doc),
-      () => 'j',
+      () => Promise.resolve('j'),
       s => statuses.push(s)
     )
     conn.connect()
-    lastSocket().fireOpen()
+    await lastSocket().fireOpen()
     lastSocket().fireMessage(encodeMessage(MSG.AUTH_OK, new Uint8Array()))
     expect(decodeMessage(lastSocket().sent[1]).type).toBe(MSG.LOAD)
     expect(statuses).toContain('connected')
     conn.destroy()
   })
 
-  it('applies LOAD_REPLY missing and pushes server-missing state', () => {
+  it('applies LOAD_REPLY missing and pushes server-missing state', async () => {
     const serverDoc = new Y.Doc()
     serverDoc.getMap('meta').set('name', 'hello')
     const missing = Y.encodeStateAsUpdate(serverDoc)
@@ -93,11 +101,11 @@ describe('RemoteConnection', () => {
       'ws://x/connect',
       doc,
       new Awareness(doc),
-      () => 'j',
+      () => Promise.resolve('j'),
       () => {}
     )
     conn.connect()
-    lastSocket().fireOpen()
+    await lastSocket().fireOpen()
     lastSocket().fireMessage(encodeMessage(MSG.AUTH_OK, new Uint8Array()))
     lastSocket().fireMessage(encodeMessage(MSG.LOAD_REPLY, encodeLoadReply(missing, serverSV)))
 
@@ -107,17 +115,17 @@ describe('RemoteConnection', () => {
     conn.destroy()
   })
 
-  it('forwards local updates as PUSH once connected', () => {
+  it('forwards local updates as PUSH once connected', async () => {
     const doc = new Y.Doc()
     const conn = new RemoteConnection(
       'ws://x/connect',
       doc,
       new Awareness(doc),
-      () => 'j',
+      () => Promise.resolve('j'),
       () => {}
     )
     conn.connect()
-    lastSocket().fireOpen()
+    await lastSocket().fireOpen()
     lastSocket().fireMessage(encodeMessage(MSG.AUTH_OK, new Uint8Array()))
     lastSocket().fireMessage(
       encodeMessage(MSG.LOAD_REPLY, encodeLoadReply(new Uint8Array(), Y.encodeStateVector(doc)))
@@ -129,17 +137,17 @@ describe('RemoteConnection', () => {
     conn.destroy()
   })
 
-  it('applies BROADCAST without echoing it back as PUSH', () => {
+  it('applies BROADCAST without echoing it back as PUSH', async () => {
     const doc = new Y.Doc()
     const conn = new RemoteConnection(
       'ws://x/connect',
       doc,
       new Awareness(doc),
-      () => 'j',
+      () => Promise.resolve('j'),
       () => {}
     )
     conn.connect()
-    lastSocket().fireOpen()
+    await lastSocket().fireOpen()
     lastSocket().fireMessage(encodeMessage(MSG.AUTH_OK, new Uint8Array()))
     lastSocket().fireMessage(
       encodeMessage(MSG.LOAD_REPLY, encodeLoadReply(new Uint8Array(), Y.encodeStateVector(doc)))
@@ -158,7 +166,7 @@ describe('RemoteConnection', () => {
 })
 
 describe('RemoteConnection awareness', () => {
-  it('broadcasts local awareness after AUTH_OK', () => {
+  it('broadcasts local awareness after AUTH_OK', async () => {
     const doc = new Y.Doc()
     const awareness = new Awareness(doc)
     awareness.setLocalStateField('user', { id: 'u1', name: 'A', color: '#a855f7' })
@@ -166,29 +174,29 @@ describe('RemoteConnection awareness', () => {
       'ws://x/connect',
       doc,
       awareness,
-      () => 'j',
+      () => Promise.resolve('j'),
       () => {}
     )
     conn.connect()
-    lastSocket().fireOpen()
+    await lastSocket().fireOpen()
     lastSocket().fireMessage(encodeMessage(MSG.AUTH_OK, new Uint8Array()))
     const awarenessFrame = lastSocket().sent.find(f => decodeMessage(f).type === MSG.AWARENESS)
     expect(awarenessFrame).toBeDefined()
     conn.destroy()
   })
 
-  it('sends MSG.AWARENESS when local awareness changes', () => {
+  it('sends MSG.AWARENESS when local awareness changes', async () => {
     const doc = new Y.Doc()
     const awareness = new Awareness(doc)
     const conn = new RemoteConnection(
       'ws://x/connect',
       doc,
       awareness,
-      () => 'j',
+      () => Promise.resolve('j'),
       () => {}
     )
     conn.connect()
-    lastSocket().fireOpen()
+    await lastSocket().fireOpen()
     lastSocket().fireMessage(encodeMessage(MSG.AUTH_OK, new Uint8Array()))
     const before = lastSocket().sent.length
     awareness.setLocalStateField('cursorTime', 42)
@@ -197,18 +205,18 @@ describe('RemoteConnection awareness', () => {
     conn.destroy()
   })
 
-  it('applies a remote MSG.AWARENESS frame into the local Awareness', () => {
+  it('applies a remote MSG.AWARENESS frame into the local Awareness', async () => {
     const doc = new Y.Doc()
     const awareness = new Awareness(doc)
     const conn = new RemoteConnection(
       'ws://x/connect',
       doc,
       awareness,
-      () => 'j',
+      () => Promise.resolve('j'),
       () => {}
     )
     conn.connect()
-    lastSocket().fireOpen()
+    await lastSocket().fireOpen()
     lastSocket().fireMessage(encodeMessage(MSG.AUTH_OK, new Uint8Array()))
     const peerDoc = new Y.Doc()
     const peerAwareness = new Awareness(peerDoc)
@@ -219,18 +227,18 @@ describe('RemoteConnection awareness', () => {
     conn.destroy()
   })
 
-  it('does not echo a remote awareness update back out', () => {
+  it('does not echo a remote awareness update back out', async () => {
     const doc = new Y.Doc()
     const awareness = new Awareness(doc)
     const conn = new RemoteConnection(
       'ws://x/connect',
       doc,
       awareness,
-      () => 'j',
+      () => Promise.resolve('j'),
       () => {}
     )
     conn.connect()
-    lastSocket().fireOpen()
+    await lastSocket().fireOpen()
     lastSocket().fireMessage(encodeMessage(MSG.AUTH_OK, new Uint8Array()))
     const before = lastSocket().sent.length
     const peerDoc = new Y.Doc()
@@ -241,6 +249,70 @@ describe('RemoteConnection awareness', () => {
     )
     const after = lastSocket().sent.slice(before).map(decodeMessage)
     expect(after.some(m => m.type === MSG.AWARENESS)).toBe(false)
+    conn.destroy()
+  })
+})
+
+describe('RemoteConnection auth hardening', () => {
+  it('closes terminally and does not reconnect when getAuthToken returns null', async () => {
+    const doc = new Y.Doc()
+    const statuses: string[] = []
+    const conn = new RemoteConnection(
+      'ws://x/connect',
+      doc,
+      new Awareness(doc),
+      () => Promise.resolve(null),
+      s => statuses.push(s)
+    )
+    conn.connect()
+    await lastSocket().fireOpen()
+    // 拿不到 token:不发 AUTH 帧
+    expect(lastSocket().sent.length).toBe(0)
+    // 终态:状态回到 disconnected,且不再创建新连接
+    expect(statuses[statuses.length - 1]).toBe('disconnected')
+    expect(FakeWebSocket.instances.length).toBe(1)
+    conn.destroy()
+  })
+
+  it('treats a server close with code 1008 as terminal and does not reconnect', async () => {
+    const doc = new Y.Doc()
+    const statuses: string[] = []
+    const conn = new RemoteConnection(
+      'ws://x/connect',
+      doc,
+      new Awareness(doc),
+      () => Promise.resolve('j'),
+      s => statuses.push(s)
+    )
+    conn.connect()
+    await lastSocket().fireOpen()
+    lastSocket().fireClose(1008)
+    expect(statuses[statuses.length - 1]).toBe('disconnected')
+    expect(FakeWebSocket.instances.length).toBe(1)
+    conn.destroy()
+  })
+
+  it('reconnects after a non-1008 close and fetches a fresh token', async () => {
+    vi.useFakeTimers()
+    const doc = new Y.Doc()
+    let calls = 0
+    const conn = new RemoteConnection(
+      'ws://x/connect',
+      doc,
+      new Awareness(doc),
+      () => Promise.resolve(`tok${++calls}`),
+      () => {}
+    )
+    conn.connect()
+    await lastSocket().fireOpen()
+    expect(new TextDecoder().decode(decodeMessage(lastSocket().sent[0]).payload)).toBe('tok1')
+    // 非 1008 关闭 → 指数退避重连(首个退避 1000ms)
+    lastSocket().fireClose(1006)
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(FakeWebSocket.instances.length).toBe(2)
+    // 重连握手取到新鲜 token
+    await lastSocket().fireOpen()
+    expect(new TextDecoder().decode(decodeMessage(lastSocket().sent[0]).payload)).toBe('tok2')
     conn.destroy()
   })
 })

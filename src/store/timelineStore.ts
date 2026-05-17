@@ -254,7 +254,7 @@ export const useTimelineStore = create<TimelineState>()((set, get) => {
     peersUnsub?.()
     peersUnsub = null
     engine.connectRemote(
-      () => useAuthStore.getState().accessToken,
+      () => useAuthStore.getState().getValidToken(),
       status => set({ connectionStatus: status })
     )
     // 设本地 awareness user(昵称 + 颜色),并订阅 peers 变化

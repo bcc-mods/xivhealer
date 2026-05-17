@@ -16,7 +16,7 @@ export class RemoteConnection {
   private readonly url: string
   private readonly doc: Y.Doc
   private readonly awareness: Awareness
-  private readonly getJwt: () => string | null
+  private readonly getAuthToken: () => Promise<string | null>
   private readonly onStatus: (status: ConnectionStatus) => void
 
   private ws: WebSocket | null = null
@@ -41,20 +41,19 @@ export class RemoteConnection {
     url: string,
     doc: Y.Doc,
     awareness: Awareness,
-    getJwt: () => string | null,
+    getAuthToken: () => Promise<string | null>,
     onStatus: (status: ConnectionStatus) => void
   ) {
     this.url = url
     this.doc = doc
     this.awareness = awareness
-    this.getJwt = getJwt
+    this.getAuthToken = getAuthToken
     this.onStatus = onStatus
   }
 
-  /** 开始连接(幂等:已在连接中则忽略) */
+  /** 开始连接(幂等:已在连接中或已终态关闭则忽略) */
   connect(): void {
-    if (this.ws) return
-    this.closed = false
+    if (this.ws || this.closed) return
     this.open()
   }
 
@@ -82,19 +81,30 @@ export class RemoteConnection {
     const ws = new WebSocket(this.url)
     ws.binaryType = 'arraybuffer'
     this.ws = ws
-    ws.onopen = () => {
-      const jwt = this.getJwt()
-      if (!jwt) {
-        ws.close()
-        return
-      }
-      ws.send(encodeMessage(MSG.AUTH, new TextEncoder().encode(jwt)))
-    }
+    // 故意把 authenticate 的 Promise 作为返回值交回:浏览器忽略 onopen 返回值,
+    // 而单测的 FakeWebSocket.fireOpen 靠 await 它来等握手完成。勿改成 `() => { void ... }`。
+    ws.onopen = () => this.authenticate(ws)
     ws.onmessage = ev => this.onMessage(new Uint8Array(ev.data as ArrayBuffer))
-    ws.onclose = () => this.onClose()
+    ws.onclose = ev => this.onClose(ev.code)
     ws.onerror = () => {
       /* onclose 紧随其后,统一在那里处理 */
     }
+  }
+
+  /**
+   * onopen 后异步取 token 并发 AUTH。
+   * 取不到有效 token 视为终态鉴权失败:置 closed、关闭连接、不再重连。
+   */
+  private async authenticate(ws: WebSocket): Promise<void> {
+    const jwt = await this.getAuthToken()
+    // await 期间连接可能已被 destroy() 关闭或被重连流程替换
+    if (this.ws !== ws || this.closed) return
+    if (!jwt) {
+      this.closed = true
+      ws.close()
+      return
+    }
+    ws.send(encodeMessage(MSG.AUTH, new TextEncoder().encode(jwt)))
   }
 
   private onMessage(frame: Uint8Array): void {
@@ -136,11 +146,18 @@ export class RemoteConnection {
     }
   }
 
-  private onClose(): void {
+  private onClose(code?: number): void {
     this.detachUpdateListener()
     this.awareness.off('update', this.onAwarenessUpdate)
     this.ws = null
     if (this.closed) {
+      this.setStatus('disconnected')
+      return
+    }
+    // 服务端以 1008 拒绝(invalid token / not an editor / auth required):
+    // 重连无意义,转入终态
+    if (code === 1008) {
+      this.closed = true
       this.setStatus('disconnected')
       return
     }

@@ -24,18 +24,21 @@ interface SharePopoverAuthorProps {
 export default function SharePopoverAuthor({ timelineId, shareUrl }: SharePopoverAuthorProps) {
   const [state, setState] = useState<ShareState | null>(null)
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(false)
+  const [reloadKey, setReloadKey] = useState(0)
   const [copied, setCopied] = useState(false)
   const [busyUserId, setBusyUserId] = useState<string | null>(null)
 
   useEffect(() => {
     let ignore = false
     setLoading(true)
+    setError(false)
     fetchShareState(timelineId)
       .then(s => {
         if (!ignore) setState(s)
       })
       .catch(() => {
-        if (!ignore) toast.error('加载共享设置失败')
+        if (!ignore) setError(true)
       })
       .finally(() => {
         if (!ignore) setLoading(false)
@@ -43,7 +46,7 @@ export default function SharePopoverAuthor({ timelineId, shareUrl }: SharePopove
     return () => {
       ignore = true
     }
-  }, [timelineId])
+  }, [timelineId, reloadKey])
 
   const handleCopy = async () => {
     try {
@@ -58,11 +61,11 @@ export default function SharePopoverAuthor({ timelineId, shareUrl }: SharePopove
   const handleToggle = async (next: boolean) => {
     if (!state) return
     const prev = state.allowEditRequests
-    setState({ ...state, allowEditRequests: next })
+    setState(cur => (cur ? { ...cur, allowEditRequests: next } : cur))
     try {
       await setAllowEditRequests(timelineId, next)
     } catch {
-      setState({ ...state, allowEditRequests: prev })
+      setState(cur => (cur ? { ...cur, allowEditRequests: prev } : cur))
       toast.error('设置失败')
     }
   }
@@ -123,9 +126,16 @@ export default function SharePopoverAuthor({ timelineId, shareUrl }: SharePopove
         </Button>
       </div>
 
-      {loading || !state ? (
+      {loading ? (
         <div className="flex justify-center py-4">
           <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
+        </div>
+      ) : error || !state ? (
+        <div className="flex flex-col items-center gap-2 py-4">
+          <p className="text-xs text-muted-foreground">加载共享设置失败</p>
+          <Button variant="outline" size="sm" onClick={() => setReloadKey(k => k + 1)}>
+            重试
+          </Button>
         </div>
       ) : (
         <>

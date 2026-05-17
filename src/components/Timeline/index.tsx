@@ -46,7 +46,12 @@ import type { SkillTrack } from '@/utils/skillTracks'
 import type { AnnotationAnchor } from '@/types/timeline'
 import type { MitigationAction } from '@/types/mitigation'
 import type { KonvaEventObject } from 'konva/lib/Node'
-import { TIMELINE_START_TIME, useCanvasColors, HP_CURVE_HEIGHT } from './constants'
+import {
+  TIMELINE_START_TIME,
+  useCanvasColors,
+  HP_CURVE_HEIGHT,
+  CROSSHAIR_LINE_POINTS,
+} from './constants'
 import HpCurveTrack from './HpCurveTrack'
 import { PeerOverlayFixed, PeerOverlayMain } from './PeerOverlay'
 import { formatTimeWithDecimal } from '@/utils/formatters'
@@ -1408,7 +1413,7 @@ export default function TimelineCanvas({ width, height }: TimelineCanvasProps) {
             <Layer ref={fixedOverlayLayerRef} x={-clampedScrollLeft} listening={false}>
               <Line
                 ref={crosshairFixedLineRef}
-                points={[0, 0, 0, fixedAreaHeight]}
+                points={CROSSHAIR_LINE_POINTS}
                 stroke={canvasColors.crosshairStroke}
                 strokeWidth={1}
                 listening={false}
@@ -1418,7 +1423,7 @@ export default function TimelineCanvas({ width, height }: TimelineCanvasProps) {
               {/* 时间标尺悬浮指示器 */}
               <Line
                 ref={timeIndicatorLineRef}
-                points={[0, 0, 0, timeRulerHeight]}
+                points={CROSSHAIR_LINE_POINTS}
                 stroke={canvasColors.zeroLine}
                 strokeWidth={1}
                 listening={false}

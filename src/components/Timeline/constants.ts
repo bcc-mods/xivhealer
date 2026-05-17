@@ -146,3 +146,13 @@ export const DAMAGE_TIME_LINE_STYLE = {
 
 /** HP 曲线轨道高度（px） */
 export const HP_CURVE_HEIGHT = 60
+
+/**
+ * 十字准线 / 时间指示线的初始 points。
+ *
+ * 这些线由鼠标事件处理器以 imperative 方式直接操控（`.points()` / `.visible()`），
+ * React 侧必须传一个**稳定引用**——否则组件每次重渲染时 react-konva 都会拿新的数组
+ * 字面量当作 `points` 变化、回写覆盖掉 imperative 设好的位置，导致竖线闪动 / 跳到 x=0。
+ * 初始值本身无意义：首帧 `visible=false`，且处理器在显示前总会先设好真实 points。
+ */
+export const CROSSHAIR_LINE_POINTS: number[] = [0, 0, 0, 0]

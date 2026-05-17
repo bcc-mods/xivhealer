@@ -309,12 +309,11 @@ export function PeerOverlayMain({
       const ce = castEventById.get(castEventId)
       const trackIdx = castEventTrackIndex.get(castEventId)
       if (ce != null && trackIdx != null) {
-        // cast icon: 30×30 centered at (timestamp*zoom, trackIdx*40 + 20)
+        // cast icon 30×30:X 是左边缘(对齐生效时刻,见 CastEventIcon 的 Group x=timestamp*zoom),
+        // Y 纵向居中于轨道
         const ICON_SIZE = 30
-        const iconCenterX = ce.timestamp * zoomLevel
-        const iconCenterY = trackIdx * trackHeight + trackHeight / 2
-        const iconX = iconCenterX - ICON_SIZE / 2
-        const iconY = iconCenterY - ICON_SIZE / 2
+        const iconX = ce.timestamp * zoomLevel
+        const iconY = trackIdx * trackHeight + trackHeight / 2 - ICON_SIZE / 2
 
         const labelIdx = labelCountByCastId.get(castEventId) ?? 0
         labelCountByCastId.set(castEventId, labelIdx + 1)
@@ -359,11 +358,10 @@ export function PeerOverlayMain({
         playerId != null ? skillTracks.findIndex(t => t.playerId === playerId) : undefined
       const trackIdx = origTrackIdx ?? fallbackTrackIdx
       if (trackIdx != null && trackIdx !== -1) {
+        // cast icon 左边缘对齐生效时刻,纵向居中于轨道
         const ICON_SIZE = 30
-        const ghostCenterX = dragTime * zoomLevel
-        const ghostCenterY = trackIdx * trackHeight + trackHeight / 2
-        const ghostX = ghostCenterX - ICON_SIZE / 2
-        const ghostY = ghostCenterY - ICON_SIZE / 2
+        const ghostX = dragTime * zoomLevel
+        const ghostY = trackIdx * trackHeight + trackHeight / 2 - ICON_SIZE / 2
         nodes.push(
           <Fragment key={`peer-ghost-cast-${peer.clientId}`}>
             <Rect
@@ -440,31 +438,20 @@ export function PeerOverlayMain({
       }
     }
 
-    // ── 悬停光标线 ──
+    // ── 悬停光标线（名字标签只在固定区时间标尺处画，见 PeerOverlayFixed；此处只画竖线） ──
     if (peer.cursorTime != null) {
       const cx = peer.cursorTime * zoomLevel
       nodes.push(
-        <Fragment key={`peer-cursor-main-${peer.clientId}`}>
-          <Line
-            points={[cx, 0, cx, skillTracksHeight]}
-            stroke={peer.user.color}
-            strokeWidth={1}
-            dash={[4, 3]}
-            opacity={0.75}
-            listening={false}
-            perfectDrawEnabled={false}
-          />
-          <Text
-            x={cx + 3}
-            y={4}
-            text={peer.user.name}
-            fontSize={10}
-            fill={peer.user.color}
-            fontFamily="Arial, sans-serif"
-            listening={false}
-            perfectDrawEnabled={false}
-          />
-        </Fragment>
+        <Line
+          key={`peer-cursor-main-${peer.clientId}`}
+          points={[cx, 0, cx, skillTracksHeight]}
+          stroke={peer.user.color}
+          strokeWidth={1}
+          dash={[4, 3]}
+          opacity={0.75}
+          listening={false}
+          perfectDrawEnabled={false}
+        />
       )
     }
   }

@@ -7,7 +7,12 @@ import { Group, Layer, Line, Rect, Shape, Text } from 'react-konva'
 import type Konva from 'konva'
 import AnnotationIcon from './AnnotationIcon'
 import CastEventIcon from './CastEventIcon'
-import { DAMAGE_TIME_LINE_STYLE, TIMELINE_START_TIME, useCanvasColors } from './constants'
+import {
+  DAMAGE_TIME_LINE_STYLE,
+  TIMELINE_START_TIME,
+  useCanvasColors,
+  CROSSHAIR_LINE_POINTS,
+} from './constants'
 import type { SkillTrack } from '@/utils/skillTracks'
 import type { Annotation, CastEvent, Timeline } from '@/types/timeline'
 import type { MitigationAction } from '@/types/mitigation'
@@ -719,7 +724,7 @@ export default function SkillTracksCanvas({
       <Layer ref={overlayLayerRef} x={-scrollLeft} y={-scrollTop} listening={false}>
         <Line
           ref={crosshairLineRef}
-          points={[0, 0, 0, skillTracksHeight]}
+          points={CROSSHAIR_LINE_POINTS}
           stroke={colors.crosshairStroke}
           strokeWidth={1}
           listening={false}

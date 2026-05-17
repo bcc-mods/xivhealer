@@ -4,7 +4,6 @@ import 'fake-indexeddb/auto'
 import { IDBFactory } from 'fake-indexeddb'
 import { runClientMigration } from './migration'
 import { IndexedDBDocStore } from './storage/IndexedDBDocStore'
-import { MIGRATION_FLAG } from './constants'
 
 const STORAGE_KEY = 'healerbook_timelines'
 
@@ -67,21 +66,27 @@ describe('runClientMigration', () => {
     expect(meta?.published).toBe(true)
   })
 
-  it('clears legacy localStorage keys and sets the flag', async () => {
+  it('clears legacy localStorage keys after migration', async () => {
     seedLegacyTimeline('x', 'X', false)
     await runClientMigration()
     expect(localStorage.getItem(`${STORAGE_KEY}_x`)).toBeNull()
     expect(localStorage.getItem(STORAGE_KEY)).toBeNull()
-    expect(localStorage.getItem(MIGRATION_FLAG)).toBe('1')
   })
 
-  it('is idempotent — second run is a no-op', async () => {
-    seedLegacyTimeline('y', 'Y', false)
-    await runClientMigration()
-    seedLegacyTimeline('z', 'Z', false)
+  it('does nothing when there is no legacy localStorage data', async () => {
     await runClientMigration()
     const store = new IndexedDBDocStore()
     await store.open()
-    expect(await store.getMeta('z')).toBeNull()
+    expect(await store.getAllMeta()).toEqual([])
+  })
+
+  it('is idempotent — a second run after the legacy index is cleared is a no-op', async () => {
+    seedLegacyTimeline('y', 'Y', false)
+    await runClientMigration()
+    // 迁移已删除旧索引键;再次运行应直接跳过,不报错、不影响已迁移数据
+    await runClientMigration()
+    const store = new IndexedDBDocStore()
+    await store.open()
+    expect(await store.getMeta('y')).not.toBeNull()
   })
 })

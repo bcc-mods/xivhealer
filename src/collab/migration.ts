@@ -3,7 +3,6 @@ import type { Timeline } from '@/types/timeline'
 import { getAllTimelineMetadata, getTimeline } from '@/utils/timelineStorage'
 import { buildYDoc } from './docSchema'
 import { IndexedDBDocStore } from './storage/IndexedDBDocStore'
-import { MIGRATION_FLAG } from './constants'
 import type { TimelineContent, LocalDocMeta } from './types'
 
 const STORAGE_KEY = 'healerbook_timelines'
@@ -34,10 +33,11 @@ function toContent(t: Timeline): TimelineContent {
  * - 已发布(曾 isShared)时间轴 → 不存本地 Y.Doc(服务端是唯一权威),
  *   只建 meta.published=true 行;首次打开走 editor/viewer 路径从 DO 拉取。
  *
- * 完成后清理旧 localStorage key。幂等 —— 靠 MIGRATION_FLAG 保证只跑一次。
+ * 完成后清理旧 localStorage key(含旧索引键 STORAGE_KEY)。迁移后已无代码再写入
+ * 该索引键,故「索引键是否存在」即可作为只跑一次的判据,无需额外标志位。
  */
 export async function runClientMigration(): Promise<void> {
-  if (localStorage.getItem(MIGRATION_FLAG)) return
+  if (!localStorage.getItem(STORAGE_KEY)) return
 
   const store = new IndexedDBDocStore()
   await store.open()
@@ -77,6 +77,4 @@ export async function runClientMigration(): Promise<void> {
     localStorage.removeItem(`${STORAGE_KEY}_${id}`)
   }
   localStorage.removeItem(STORAGE_KEY)
-
-  localStorage.setItem(MIGRATION_FLAG, '1')
 }

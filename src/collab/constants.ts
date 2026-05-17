@@ -36,6 +36,3 @@ export const IDB_STORE_META = 'meta'
 
 /** 客户端惰性 squash 阈值:updates 条数超过即合并 */
 export const CLIENT_SQUASH_THRESHOLD = 100
-
-/** 客户端迁移完成标志位(localStorage key) */
-export const MIGRATION_FLAG = 'healerbook_collab_migrated_v1'

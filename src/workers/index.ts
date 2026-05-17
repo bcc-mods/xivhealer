@@ -12,6 +12,7 @@ import { statisticsRoutes } from './routes/statistics'
 import { encounterTemplatesRoutes } from './routes/encounterTemplates'
 import { samplesQueueRoutes } from './routes/samplesQueue'
 import { internalMigrateRoutes } from './routes/internalMigrate'
+import { shareRoutes } from './routes/share'
 import { handleScheduled } from './scheduled'
 import { TimelineDoc } from './durable/TimelineDoc'
 
@@ -29,7 +30,7 @@ app.use(
       if (c.env.ENVIRONMENT !== 'production') return '*'
       return PROD_ALLOWED_ORIGINS.includes(origin) ? origin : null
     },
-    allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowHeaders: ['Content-Type', 'Authorization'],
     maxAge: 86400,
   })
@@ -44,6 +45,7 @@ app.notFound(c => c.json({ error: 'Not Found' }, 404))
 
 app.route('/api/auth', authRoutes)
 app.route('/api/timelines', timelinesRoutes)
+app.route('/api/timelines', shareRoutes)
 app.route('/api/my', myRoutes)
 app.route('/api/fflogs', fflogsRoutes)
 app.route('/api/top100', top100Routes)

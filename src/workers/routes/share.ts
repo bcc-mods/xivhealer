@@ -7,16 +7,20 @@ import { requireAuth } from '../middleware/requireAuth'
 
 const app = new Hono<AppEnv>()
 
-/** 校验调用者是该时间轴作者;是则返回作者行,否则 null */
+/**
+ * 校验调用者是该时间轴作者;是则返回作者行（含 allow_edit_requests），否则 null。
+ * 时间轴不存在或调用者非作者都返回 null;调用方统一回 403——
+ * 作为作者专用端点的统一守卫,不区分两者。
+ */
 async function findAuthor(
   env: AppEnv['Bindings'],
   timelineId: string,
   userId: string
-): Promise<{ author_id: string } | null> {
+): Promise<{ author_id: string; allow_edit_requests: number } | null> {
   const row = await env.healerbook_timelines
-    .prepare('SELECT author_id FROM timelines WHERE id = ?')
+    .prepare('SELECT author_id, allow_edit_requests FROM timelines WHERE id = ?')
     .bind(timelineId)
-    .first<{ author_id: string }>()
+    .first<{ author_id: string; allow_edit_requests: number }>()
   if (!row || row.author_id !== userId) return null
   return row
 }
@@ -27,11 +31,6 @@ app.get('/:id/share', requireAuth, async c => {
   const id = c.req.param('id')
   const author = await findAuthor(c.env, id, auth.userId)
   if (!author) return c.json({ error: 'Forbidden' }, 403)
-
-  const tl = await c.env.healerbook_timelines
-    .prepare('SELECT allow_edit_requests FROM timelines WHERE id = ?')
-    .bind(id)
-    .first<{ allow_edit_requests: number }>()
 
   const editors = await c.env.healerbook_timelines
     .prepare(
@@ -48,7 +47,7 @@ app.get('/:id/share', requireAuth, async c => {
     .all<{ user_id: string; user_name: string; created_at: number }>()
 
   return c.json({
-    allowEditRequests: (tl?.allow_edit_requests ?? 0) === 1,
+    allowEditRequests: author.allow_edit_requests === 1,
     editors: editors.results.map(r => ({ userId: r.user_id, userName: r.user_name })),
     applicants: applicants.results.map(r => ({
       userId: r.user_id,

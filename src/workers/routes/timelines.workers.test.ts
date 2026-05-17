@@ -103,13 +103,24 @@ describe('GET /api/timelines/:id role', () => {
     expect(anon.allowEditRequests).toBe(false)
     expect(anon.hasPendingRequest).toBe(false)
 
-    // 作者:isAuthor true
+    // 作者:isAuthor true, hasPendingRequest false（作者始终在编辑者名单中）
     const author = (await (
       await SELF.fetch(`https://app/api/timelines/${id}`, {
         headers: { Authorization: `Bearer ${await authorJwt()}` },
       })
-    ).json()) as { isAuthor: boolean }
+    ).json()) as { isAuthor: boolean; hasPendingRequest: boolean }
     expect(author.isAuthor).toBe(true)
+    expect(author.hasPendingRequest).toBe(false)
+
+    // allowEditRequests: true 时 GET 响应应反映该标志
+    await env.healerbook_timelines
+      .prepare('UPDATE timelines SET allow_edit_requests = 1 WHERE id = ?')
+      .bind(id)
+      .run()
+    const withFlag = (await (await SELF.fetch(`https://app/api/timelines/${id}`)).json()) as {
+      allowEditRequests: boolean
+    }
+    expect(withFlag.allowEditRequests).toBe(true)
 
     // 非编辑者且有待处理申请:hasPendingRequest true
     await env.healerbook_timelines

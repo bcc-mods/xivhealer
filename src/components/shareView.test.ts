@@ -41,7 +41,17 @@ describe('deriveShareView', () => {
     )
   })
   it('被撤销:即使 isAuthor 也按 viewer 处理', () => {
-    expect(deriveShareView({ ...base, isAuthor: true, isRevoked: true }).kind).not.toBe('author')
+    expect(deriveShareView({ ...base, isAuthor: true, isRevoked: true }).kind).toBe(
+      'viewer-no-request'
+    )
+  })
+  it('editor role 不受 isLoggedIn 影响 → editor', () => {
+    expect(deriveShareView({ ...base, role: 'editor', isLoggedIn: false }).kind).toBe('editor')
+  })
+  it('viewer 已申请但开关已关 → viewer-no-request(设计决策:隐藏已申请状态)', () => {
+    expect(
+      deriveShareView({ ...base, allowEditRequests: false, hasPendingRequest: true }).kind
+    ).toBe('viewer-no-request')
   })
 })
 

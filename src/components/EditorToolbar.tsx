@@ -14,7 +14,6 @@ import {
   TriangleAlert,
   Settings,
   Eye,
-  Copy,
   Download,
 } from 'lucide-react'
 import { useTimelineStore } from '@/store/timelineStore'
@@ -58,12 +57,20 @@ const ExportSoumaDialog = lazy(() => import('./ExportSoumaDialog'))
 import { useEncounterStatistics } from '@/hooks/useEncounterStatistics'
 import { track } from '@/utils/analytics'
 
+interface ShareRole {
+  role: 'editor' | 'viewer'
+  isAuthor: boolean
+  allowEditRequests: boolean
+  hasPendingRequest: boolean
+}
+
 interface EditorToolbarProps {
-  onCreateCopy?: () => void
+  onCreateCopy: () => void
   onPublished?: (newId: string) => void
   forceReadOnly?: boolean
   viewMode: 'timeline' | 'table'
   onViewModeChange: (mode: 'timeline' | 'table') => void
+  shareRole: ShareRole
 }
 
 export default function EditorToolbar({
@@ -72,6 +79,7 @@ export default function EditorToolbar({
   forceReadOnly,
   viewMode,
   onViewModeChange,
+  shareRole,
 }: EditorToolbarProps) {
   const {
     timeline,
@@ -349,28 +357,21 @@ export default function EditorToolbar({
               <TooltipContent side="bottom">数值设置</TooltipContent>
             </Tooltip>
 
-            {/* 共享按钮 或 在本地创建副本 */}
+            {/* 共享 */}
             {timeline && (
               <>
                 <div className="w-px h-6 bg-border mx-1" />
-                {onCreateCopy ? (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-7 shrink-0 whitespace-nowrap"
-                    onClick={onCreateCopy}
-                  >
-                    <Copy className="w-4 h-4" />
-                    <span className="hidden lg:inline">在本地创建副本</span>
-                  </Button>
-                ) : (
-                  <SharePopover
-                    timeline={timeline}
-                    isPublished={isPublished}
-                    viewMode={viewMode}
-                    onPublished={newId => onPublished?.(newId)}
-                  />
-                )}
+                <SharePopover
+                  timeline={timeline}
+                  isPublished={isPublished}
+                  viewMode={viewMode}
+                  onPublished={newId => onPublished?.(newId)}
+                  onCreateCopy={onCreateCopy}
+                  role={shareRole.role}
+                  isAuthor={shareRole.isAuthor}
+                  allowEditRequests={shareRole.allowEditRequests}
+                  hasPendingRequest={shareRole.hasPendingRequest}
+                />
               </>
             )}
 

@@ -67,6 +67,13 @@ export default function EditorPage() {
 
   const [mode, setMode] = useState<PageMode>('loading')
   const [authorName, setAuthorName] = useState<string>('')
+  const [shareRole, setShareRole] = useState<{
+    role: 'editor' | 'viewer'
+    isAuthor: boolean
+    allowEditRequests: boolean
+    hasPendingRequest: boolean
+  }>({ role: 'viewer', isAuthor: false, allowEditRequests: false, hasPendingRequest: false })
+  const connectionStatus = useTimelineStore(s => s.connectionStatus)
 
   useEffect(() => {
     if (mitigationActions.length === 0) loadMitigationActions()
@@ -116,6 +123,27 @@ export default function EditorPage() {
             }
             await openTimeline(id, { published: true })
             if (!ignore) setMode('editor')
+            // 取角色信息(用于共享 popover);失败默认作者
+            fetchSharedTimeline(id)
+              .then(res => {
+                if (ignore) return
+                setShareRole({
+                  role: res.role,
+                  isAuthor: res.isAuthor,
+                  allowEditRequests: res.allowEditRequests,
+                  hasPendingRequest: res.hasPendingRequest,
+                })
+              })
+              .catch(() => {
+                if (!ignore)
+                  setShareRole({
+                    role: 'editor',
+                    isAuthor: true,
+                    allowEditRequests: false,
+                    hasPendingRequest: false,
+                  })
+              })
+            return
           } else {
             await openTimeline(id)
             if (!ignore) setMode('local')
@@ -126,6 +154,12 @@ export default function EditorPage() {
         const res = await fetchSharedTimeline(id)
         if (ignore) return
         setAuthorName(res.authorName)
+        setShareRole({
+          role: res.role,
+          isAuthor: res.isAuthor,
+          allowEditRequests: res.allowEditRequests,
+          hasPendingRequest: res.hasPendingRequest,
+        })
         if (res.role === 'editor') {
           await openTimeline(id, { published: true })
           if (!ignore) setMode('editor')
@@ -154,6 +188,14 @@ export default function EditorPage() {
       reset()
     }
   }, [id, reset])
+
+  // 编辑权限被作者撤销:服务端断开 WS,RemoteConnection 报告 'revoked'
+  useEffect(() => {
+    if (connectionStatus === 'revoked') {
+      useUIStore.setState({ isReadOnly: true })
+      toast.error('你的编辑权限已被移除')
+    }
+  }, [connectionStatus])
 
   // 发布成功回调:同 id 原地升级 editor;id 变更则 navigate 重挂
   const handlePublished = useCallback(
@@ -369,11 +411,12 @@ export default function EditorPage() {
 
       <DamageCalculationContext.Provider value={calculationResults}>
         <EditorToolbar
-          onCreateCopy={isViewMode ? handleCreateCopy : undefined}
+          onCreateCopy={handleCreateCopy}
           onPublished={handlePublished}
-          forceReadOnly={isViewMode}
+          forceReadOnly={isViewMode || connectionStatus === 'revoked'}
           viewMode={viewMode}
           onViewModeChange={handleViewModeChange}
+          shareRole={shareRole}
         />
 
         <div className="flex-1 flex overflow-hidden">

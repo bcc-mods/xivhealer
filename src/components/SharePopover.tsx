@@ -1,10 +1,10 @@
 /**
- * 共享 Popover 组件
- * 三种状态:未登录 / 已登录未发布 / 已发布
+ * 共享 Popover —— 7 态权限管理面板。
+ * 呈现态由 deriveShareView 推导,见 shareView.ts。
  */
 
 import { useState } from 'react'
-import { Copy, Check, Loader2, Globe, Upload, CloudUpload, Lock } from 'lucide-react'
+import { Copy, Check, Loader2, Globe, Upload, CloudUpload, Lock, Pencil } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -22,36 +22,79 @@ import { useAuth } from '@/hooks/useAuth'
 import { useAuthStore } from '@/store/authStore'
 import { useTimelineStore } from '@/store/timelineStore'
 import type { Timeline } from '@/types/timeline'
-import { publishTimeline } from '@/api/timelineShareApi'
+import { publishTimeline, requestEditPermission } from '@/api/timelineShareApi'
 import { IndexedDBDocStore } from '@/collab/storage/IndexedDBDocStore'
 import { track } from '@/utils/analytics'
+import { deriveShareView, deriveShareTrigger } from './shareView'
+import SharePopoverAuthor from './SharePopoverAuthor'
 
 interface SharePopoverProps {
   timeline: Timeline
-  /** 是否已发布(editor 模式) */
+  /** 是否已发布到云端 */
   isPublished: boolean
   viewMode: 'timeline' | 'table'
-  /** 发布成功(参数为服务端最终 id,可能被清洗变更) */
+  /** 发布成功(参数为服务端最终 id) */
   onPublished: (newId: string) => void
+  /** 在本地创建副本 */
+  onCreateCopy: () => void
+  /** 角色信息(来自 EditorPage 的 GET /:id;本地未发布时为占位值) */
+  role: 'editor' | 'viewer'
+  isAuthor: boolean
+  allowEditRequests: boolean
+  hasPendingRequest: boolean
 }
 
 const SHARE_BASE_URL = window.location.origin
+
+/** popover 按钮栏:置底右对齐 */
+function ShareButtonBar({ children }: { children: React.ReactNode }) {
+  return <div className="flex justify-end gap-2 pt-1">{children}</div>
+}
 
 export default function SharePopover({
   timeline,
   isPublished,
   viewMode,
   onPublished,
+  onCreateCopy,
+  role,
+  isAuthor,
+  allowEditRequests,
+  hasPendingRequest,
 }: SharePopoverProps) {
   const { isLoggedIn, login } = useAuth()
   const accessToken = useAuthStore(s => s.accessToken)
+  const isRevoked = useTimelineStore(s => s.connectionStatus === 'revoked')
   const [loading, setLoading] = useState(false)
   const [copied, setCopied] = useState(false)
   const [confirmOpen, setConfirmOpen] = useState(false)
+  const [requesting, setRequesting] = useState(false)
+  const [requested, setRequested] = useState(false)
 
-  const shareUrl = isPublished
-    ? `${SHARE_BASE_URL}/timeline/${timeline.id}${viewMode === 'table' ? '?view=table' : ''}`
-    : ''
+  const view = deriveShareView({
+    isPublished,
+    isLoggedIn,
+    role,
+    isAuthor,
+    allowEditRequests,
+    hasPendingRequest,
+    isRevoked,
+  })
+  const trigger = deriveShareTrigger({
+    isPublished,
+    isLoggedIn,
+    role,
+    isAuthor,
+    allowEditRequests,
+    hasPendingRequest,
+    isRevoked,
+  })
+
+  const shareUrl =
+    isPublished && !isRevoked
+      ? `${SHARE_BASE_URL}/timeline/${timeline.id}${viewMode === 'table' ? '?view=table' : ''}`
+      : ''
+  const pendingRequest = hasPendingRequest || requested
 
   const handleCopy = async () => {
     try {
@@ -89,6 +132,43 @@ export default function SharePopover({
     }
   }
 
+  const handleRequest = async () => {
+    setRequesting(true)
+    try {
+      await requestEditPermission(timeline.id)
+      setRequested(true)
+      toast.success('已提交申请,等待作者通过')
+    } catch (err) {
+      toast.error(`申请失败:${err instanceof Error ? err.message : '未知错误'}`)
+    } finally {
+      setRequesting(false)
+    }
+  }
+
+  const triggerIcon =
+    trigger === 'publish' ? (
+      <CloudUpload className="w-4 h-4" />
+    ) : trigger === 'author' ? (
+      <Globe className="w-4 h-4" />
+    ) : trigger === 'editor' ? (
+      <Pencil className="w-4 h-4" />
+    ) : (
+      <Lock className="w-4 h-4" />
+    )
+  const triggerLabel = trigger === 'editor' ? '可编辑' : trigger === 'viewer' ? '只能查看' : '共享'
+
+  const copyButton = (
+    <Button variant="outline" size="sm" onClick={handleCopy}>
+      {copied ? <Check className="w-4 h-4 mr-1" /> : <Copy className="w-4 h-4 mr-1" />}
+      复制分享链接
+    </Button>
+  )
+  const createCopyButton = (
+    <Button variant="outline" size="sm" onClick={onCreateCopy}>
+      创建副本
+    </Button>
+  )
+
   return (
     <>
       <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
@@ -105,6 +185,7 @@ export default function SharePopover({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
       <Popover>
         <PopoverTrigger asChild>
           <Button
@@ -112,70 +193,100 @@ export default function SharePopover({
             size="sm"
             className="h-7 shrink-0 gap-1 font-normal whitespace-nowrap"
           >
-            {isPublished ? <Globe className="w-4 h-4" /> : <CloudUpload className="w-4 h-4" />}
-            <span className="hidden lg:inline">共享</span>
+            {triggerIcon}
+            <span className="hidden lg:inline">{triggerLabel}</span>
           </Button>
         </PopoverTrigger>
 
         <PopoverContent className="w-80" align="end">
           <div className="space-y-3">
-            <div>
-              <h4 className="font-medium text-sm">共享时间轴</h4>
-              <div className="flex items-center gap-1.5 mt-1 text-xs text-muted-foreground">
-                {!isLoggedIn ? (
-                  <>
-                    <Lock className="w-3.5 h-3.5 shrink-0" />
-                    <span>需要登录才能共享时间轴</span>
-                  </>
-                ) : isPublished ? (
-                  <>
-                    <Globe className="w-3.5 h-3.5 shrink-0" />
-                    <span>时间轴已发布,获得链接的人可阅读</span>
-                  </>
+            <h4 className="font-medium text-sm">共享时间轴</h4>
+
+            {view.kind === 'publish' && (
+              <div className="space-y-3">
+                {isLoggedIn ? (
+                  <Button
+                    variant="default"
+                    className="w-full"
+                    onClick={() => setConfirmOpen(true)}
+                    disabled={loading}
+                  >
+                    {loading ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Upload className="w-4 h-4" />
+                    )}
+                    发布
+                  </Button>
                 ) : (
                   <>
-                    <Lock className="w-3.5 h-3.5 shrink-0" />
-                    <span>时间轴未共享,仅本设备可查看</span>
+                    <p className="text-xs text-muted-foreground">登录后可发布并共享时间轴。</p>
+                    <Button className="w-full" onClick={login}>
+                      登录 FFLogs
+                    </Button>
                   </>
                 )}
               </div>
-            </div>
-            {!isLoggedIn ? (
+            )}
+
+            {view.kind === 'viewer-anon' && (
               <div className="space-y-3">
-                <Button className="w-full" onClick={login}>
-                  登录 FFLogs
-                </Button>
-              </div>
-            ) : !isPublished ? (
-              <div className="space-y-3">
-                <Button
-                  variant="default"
-                  className="w-full"
-                  onClick={() => setConfirmOpen(true)}
-                  disabled={loading}
-                >
-                  {loading ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <Upload className="w-4 h-4" />
-                  )}
-                  发布
-                </Button>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                <div className="flex items-center gap-2">
-                  <input
-                    readOnly
-                    value={shareUrl}
-                    className="flex-1 px-2 py-1 text-xs border rounded bg-muted font-mono truncate"
-                  />
-                  <Button variant="outline" size="sm" onClick={handleCopy}>
-                    {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                <p className="text-sm text-muted-foreground">
+                  你只能查看此时间轴,若要编辑时间轴,请生成副本进行编辑。
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  已是该时间轴的编辑者?登录后即可编辑。
+                </p>
+                <ShareButtonBar>
+                  <Button variant="outline" size="sm" onClick={login}>
+                    登录 FFLogs
                   </Button>
-                </div>
-                <p className="text-xs text-muted-foreground">改动会实时同步,无需手动保存。</p>
+                  {createCopyButton}
+                </ShareButtonBar>
               </div>
+            )}
+
+            {view.kind === 'viewer-no-request' && (
+              <div className="space-y-3">
+                <p className="text-sm text-muted-foreground">
+                  你只能查看此时间轴,若要编辑时间轴,请生成副本进行编辑。
+                </p>
+                <ShareButtonBar>{createCopyButton}</ShareButtonBar>
+              </div>
+            )}
+
+            {(view.kind === 'viewer-can-request' || view.kind === 'viewer-requested') && (
+              <div className="space-y-3">
+                <p className="text-sm text-muted-foreground">
+                  你只能查看此时间轴,若要编辑时间轴,请向时间轴作者申请编辑权限或生成副本进行编辑。
+                </p>
+                <ShareButtonBar>
+                  {createCopyButton}
+                  <Button
+                    variant="default"
+                    size="sm"
+                    disabled={pendingRequest || requesting}
+                    onClick={handleRequest}
+                  >
+                    {requesting && <Loader2 className="w-4 h-4 mr-1 animate-spin" />}
+                    {pendingRequest ? '已申请' : '申请编辑权限'}
+                  </Button>
+                </ShareButtonBar>
+              </div>
+            )}
+
+            {view.kind === 'editor' && (
+              <div className="space-y-3">
+                <p className="text-sm text-muted-foreground">你有权限编辑该文档。</p>
+                <ShareButtonBar>
+                  {createCopyButton}
+                  {copyButton}
+                </ShareButtonBar>
+              </div>
+            )}
+
+            {view.kind === 'author' && (
+              <SharePopoverAuthor timelineId={timeline.id} shareUrl={shareUrl} />
             )}
           </div>
         </PopoverContent>

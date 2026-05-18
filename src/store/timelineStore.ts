@@ -203,8 +203,10 @@ export const useTimelineStore = create<TimelineState>()((set, get) => {
     if (metaTimer) clearTimeout(metaTimer)
     metaTimer = setTimeout(() => {
       metaTimer = null
-      const { engine, timeline, isPublished } = get()
+      const { engine, timeline, sessionRole } = get()
       if (!engine || !timeline) return
+      const kind: LocalDocMeta['kind'] =
+        sessionRole === 'local' ? 'local' : sessionRole === 'author' ? 'published' : 'visited'
       const meta: LocalDocMeta = {
         docId: engine.docId,
         name: timeline.name,
@@ -212,7 +214,8 @@ export const useTimelineStore = create<TimelineState>()((set, get) => {
         createdAt: timeline.createdAt,
         updatedAt: timeline.updatedAt,
         composition: timeline.composition ?? null,
-        published: isPublished,
+        kind,
+        lastViewedAt: Math.floor(Date.now() / 1000),
       }
       if (timeline.fflogsSource) meta.fflogsSource = timeline.fflogsSource
       void engine.saveMeta(meta)

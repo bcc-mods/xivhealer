@@ -30,7 +30,7 @@ describe('createLocalTimeline', () => {
     expect(meta?.docId).toBe(id)
     expect(meta?.name).toBe('测试轴')
     expect(meta?.encounterId).toBe(88)
-    expect(meta?.published).toBe(false)
+    expect(meta?.kind).toBe('local')
   })
 
   it('generates distinct ids on each call', async () => {

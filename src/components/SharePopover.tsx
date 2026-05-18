@@ -123,7 +123,7 @@ export default function SharePopover({
         await store.rekey(timeline.id, newId)
       }
       const meta = await store.getMeta(newId)
-      if (meta) await store.putMeta({ ...meta, published: true })
+      if (meta) await store.putMeta({ ...meta, kind: 'published' })
       await useTimelineStore.getState().applyPublishResult(newId)
       track('timeline-publish', { encounterId: timeline.encounter?.id })
       onPublished(newId)

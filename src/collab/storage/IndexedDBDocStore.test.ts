@@ -100,7 +100,8 @@ describe('meta store', () => {
       createdAt: 1,
       updatedAt: 2,
       composition: null,
-      published: false,
+      kind: 'local' as const,
+      lastViewedAt: 1,
     }
     await store.putMeta(meta)
     expect(await store.getMeta('d1')).toEqual(meta)
@@ -116,7 +117,8 @@ describe('meta store', () => {
       createdAt: 1,
       updatedAt: 1,
       composition: null,
-      published: false,
+      kind: 'local' as const,
+      lastViewedAt: 1,
     })
     await store.putMeta({
       docId: 'b',
@@ -125,7 +127,8 @@ describe('meta store', () => {
       createdAt: 1,
       updatedAt: 1,
       composition: null,
-      published: true,
+      kind: 'published' as const,
+      lastViewedAt: 1,
     })
     const all = await store.getAllMeta()
     expect(all.map(m => m.docId).sort()).toEqual(['a', 'b'])
@@ -142,7 +145,8 @@ describe('meta store', () => {
       createdAt: 1,
       updatedAt: 1,
       composition: null,
-      published: false,
+      kind: 'local' as const,
+      lastViewedAt: 1,
     })
     await store.deleteDoc('x')
     expect(await store.loadDoc('x')).toBeNull()
@@ -160,7 +164,8 @@ describe('meta store', () => {
       createdAt: 1,
       updatedAt: 1,
       composition: null,
-      published: false,
+      kind: 'local' as const,
+      lastViewedAt: 1,
     })
     await store.rekey('same', 'same')
     expect(await store.loadDoc('same')).not.toBeNull()
@@ -179,7 +184,8 @@ describe('meta store', () => {
       createdAt: 1,
       updatedAt: 1,
       composition: null,
-      published: false,
+      kind: 'local' as const,
+      lastViewedAt: 1,
     })
     await store.rekey('old', 'new')
     expect(await store.loadDoc('old')).toBeNull()

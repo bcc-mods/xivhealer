@@ -29,9 +29,9 @@ function toContent(t: Timeline): TimelineContent {
 /**
  * 客户端一次性迁移:旧 localStorage 时间轴 → IndexedDB。
  *
- * - 纯本地(从未发布)时间轴 → buildYDoc 落 snapshot,meta.published=false。
+ * - 纯本地(从未发布)时间轴 → buildYDoc 落 snapshot,meta.kind='local'。
  * - 已发布(曾 isShared)时间轴 → 不存本地 Y.Doc(服务端是唯一权威),
- *   只建 meta.published=true 行;首次打开走 editor/viewer 路径从 DO 拉取。
+ *   只建 meta.kind='published' 行;首次打开走 editor/viewer 路径从 DO 拉取。
  *
  * 完成后清理旧 localStorage key(含旧索引键 STORAGE_KEY)。迁移后已无代码再写入
  * 该索引键,故「索引键是否存在」即可作为只跑一次的判据,无需额外标志位。
@@ -50,7 +50,7 @@ export async function runClientMigration(): Promise<void> {
       if (!timeline) continue
       const now = Math.floor(Date.now() / 1000)
       // 故意用 isShared（当前状态）而非 everPublished：曾发布后取消共享的轴应作为纯本地轴迁移，会生成本地 Y.Doc
-      const published = !!timeline.isShared
+      const isPublished = !!timeline.isShared
       const docMeta: LocalDocMeta = {
         docId: meta.id,
         name: timeline.name,
@@ -58,12 +58,13 @@ export async function runClientMigration(): Promise<void> {
         createdAt: timeline.createdAt,
         updatedAt: timeline.updatedAt || now,
         composition: timeline.composition ?? null,
-        published,
+        kind: isPublished ? 'published' : 'local',
+        lastViewedAt: now,
       }
       if (timeline.fflogsSource) docMeta.fflogsSource = timeline.fflogsSource
       await store.putMeta(docMeta)
 
-      if (!published) {
+      if (!isPublished) {
         const doc = buildYDoc(toContent(timeline))
         await store.appendUpdate(meta.id, encodeStateAsUpdate(doc))
       }

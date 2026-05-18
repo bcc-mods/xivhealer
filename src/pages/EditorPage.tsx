@@ -95,7 +95,7 @@ export default function EditorPage() {
         if (ignore) return
 
         if (meta) {
-          if (meta.published) {
+          if (meta.kind !== 'local') {
             // 本地标记为已发布:与服务端对账。作者可能已取消发布,
             // 此时服务端无此行,需把本地副本回退为纯本地时间轴。
             let serverRes: Awaited<ReturnType<typeof fetchSharedTimeline>> | null = null
@@ -114,7 +114,7 @@ export default function EditorPage() {
               const localId = generateId()
               await store.rekey(id, localId)
               const movedMeta = await store.getMeta(localId)
-              if (movedMeta) await store.putMeta({ ...movedMeta, published: false })
+              if (movedMeta) await store.putMeta({ ...movedMeta, kind: 'local' })
               if (ignore) return
               toast.info('该时间轴已被作者取消发布,已转为本地时间轴')
               navigate(`/timeline/${localId}`, { replace: true })

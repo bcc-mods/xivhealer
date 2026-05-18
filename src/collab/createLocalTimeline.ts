@@ -24,7 +24,8 @@ export async function createLocalTimeline(content: TimelineContent): Promise<str
     createdAt: content.createdAt ?? now,
     updatedAt: now,
     composition: content.composition ?? null,
-    published: false,
+    kind: 'local',
+    lastViewedAt: now,
   }
   if (content.fflogsSource) meta.fflogsSource = content.fflogsSource
   await store.putMeta(meta)

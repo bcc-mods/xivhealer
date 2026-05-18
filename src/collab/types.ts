@@ -34,6 +34,8 @@ export interface LocalDocMeta {
   composition: Composition | null
   /** FFLogs 来源(用于导入去重索引);无则 undefined */
   fflogsSource?: Timeline['fflogsSource']
-  /** 是否已发布到云端 */
-  published: boolean
+  /** 时间轴归属状态：local=本地未发布 / published=我发布的 / visited=我访问过的他人时间轴 */
+  kind: 'local' | 'published' | 'visited'
+  /** 最近一次打开时间（Unix 秒）—— HomePage 列表排序键 */
+  lastViewedAt: number
 }

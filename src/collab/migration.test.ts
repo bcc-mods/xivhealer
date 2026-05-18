@@ -44,7 +44,7 @@ beforeEach(() => {
 })
 
 describe('runClientMigration', () => {
-  it('migrates a pure-local timeline to a Y.Doc with published=false meta', async () => {
+  it('migrates a pure-local timeline to a Y.Doc with kind=local meta', async () => {
     seedLegacyTimeline('local-1', '本地轴', false)
     await runClientMigration()
 
@@ -52,7 +52,7 @@ describe('runClientMigration', () => {
     await store.open()
     expect(await store.loadDoc('local-1')).not.toBeNull()
     const meta = await store.getMeta('local-1')
-    expect(meta?.published).toBe(false)
+    expect(meta?.kind).toBe('local')
   })
 
   it('does NOT store a local Y.Doc for a formerly-shared timeline', async () => {
@@ -63,7 +63,7 @@ describe('runClientMigration', () => {
     await store.open()
     expect(await store.loadDoc('shared-1')).toBeNull()
     const meta = await store.getMeta('shared-1')
-    expect(meta?.published).toBe(true)
+    expect(meta?.kind).toBe('published')
   })
 
   it('clears legacy localStorage keys after migration', async () => {

@@ -148,9 +148,14 @@ export default function EditorPage() {
           return
         }
         if (decision.kind === 'viewer') {
-          setViewerSnapshot(serverRes!.snapshot!)
-          await store.putMeta(buildVisitedMeta(id, serverRes!.snapshot!))
+          const snap = serverRes?.snapshot
+          if (!snap) {
+            if (!ignore) setMode('network_error')
+            return
+          }
+          await store.putMeta(buildVisitedMeta(id, snap))
           if (ignore) return
+          setViewerSnapshot(snap)
           setAuthorName(serverRes!.authorName)
           setShareRole({
             role: 'viewer',

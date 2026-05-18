@@ -59,4 +59,10 @@ describe('decideOpen', () => {
       kind: 'network-error',
     })
   })
+
+  it('首次链接进入、网络错误、有本地缓存：network-error（null kind 忽略 hasLocalDoc）', () => {
+    expect(decideOpen(null, { type: 'neterror', hasLocalDoc: true })).toEqual({
+      kind: 'network-error',
+    })
+  })
 })

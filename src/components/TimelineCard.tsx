@@ -2,7 +2,7 @@
  * 时间轴卡片组件
  */
 
-import { Trash2 } from 'lucide-react'
+import { Trash2, HardDrive, Globe } from 'lucide-react'
 import JobIcon from './JobIcon'
 import type { Composition } from '@/types/timeline'
 import { sortJobsByOrder } from '@/data/jobs'
@@ -14,6 +14,7 @@ interface TimelineCardItem {
   createdAt: number
   updatedAt: number
   composition?: Composition | null
+  kind: 'local' | 'published' | 'visited'
 }
 
 interface TimelineCardProps {
@@ -36,7 +37,13 @@ export default function TimelineCard({ timeline, onClick, onDelete }: TimelineCa
       onClick={onClick}
     >
       <div className="flex items-start justify-between mb-2">
-        <div>
+        <div className="flex items-center gap-1.5 min-w-0">
+          {timeline.kind === 'local' && (
+            <HardDrive className="w-4 h-4 shrink-0 text-muted-foreground" aria-label="本地" />
+          )}
+          {timeline.kind === 'published' && (
+            <Globe className="w-4 h-4 shrink-0 text-muted-foreground" aria-label="已发布" />
+          )}
           <h3 className="font-medium group-hover:text-primary line-clamp-1" title={timeline.name}>
             {timeline.name}
           </h3>
@@ -44,7 +51,14 @@ export default function TimelineCard({ timeline, onClick, onDelete }: TimelineCa
         {onDelete && (
           <button
             onClick={onDelete}
-            className="p-1 hover:bg-destructive/10 hover:text-destructive rounded transition-colors"
+            title={
+              timeline.kind === 'local'
+                ? '删除'
+                : timeline.kind === 'published'
+                  ? '取消发布并删除'
+                  : '从列表移除'
+            }
+            className="p-1 shrink-0 hover:bg-destructive/10 hover:text-destructive rounded transition-colors"
           >
             <Trash2 className="w-4 h-4" />
           </button>

@@ -179,6 +179,7 @@ export default function HomePage() {
                     createdAt: meta.createdAt,
                     updatedAt: meta.updatedAt,
                     composition: meta.composition,
+                    kind: meta.kind,
                   }}
                   onClick={() => {
                     track('timeline-open', { source: 'local' })
@@ -212,6 +213,7 @@ export default function HomePage() {
                     createdAt: timeline.publishedAt,
                     updatedAt: timeline.updatedAt,
                     composition: timeline.composition,
+                    kind: 'published' as const,
                   }}
                   onClick={() => {
                     track('timeline-open', { source: 'published' })

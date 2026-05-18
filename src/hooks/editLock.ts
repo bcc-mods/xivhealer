@@ -13,7 +13,7 @@ export type EditLockCauseId = 'viewer' | 'offline' | 'replay' | 'manual'
 
 interface CauseSpec {
   id: EditLockCauseId
-  /** 文案展示时谁是主因，数字大者优先 */
+  /** 原因优先级（reasonOf 排序用）；数字越大越优先 */
   priority: number
   /** 'all' = 冻结全部能力；或显式列出冻结的能力 */
   revokes: 'all' | EditCapability[]

@@ -43,6 +43,16 @@ describe('computeEditLock', () => {
     expect(lock.reasonOf('content')).toBe('offline')
   })
 
+  it('editor 断线（disconnected）：全部锁定，原因 offline', () => {
+    const lock = computeEditLock({
+      ...base,
+      sessionRole: 'editor',
+      connectionStatus: 'disconnected',
+    })
+    expect(lock.can('content')).toBe(false)
+    expect(lock.reasonOf('content')).toBe('offline')
+  })
+
   it('author 未连线：不锁（作者可离线编辑）', () => {
     const lock = computeEditLock({
       ...base,

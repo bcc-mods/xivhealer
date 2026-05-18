@@ -2,7 +2,7 @@
  * 主页
  */
 
-import { useState, useCallback, useEffect, lazy, Suspense } from 'react'
+import { useState, useCallback, useEffect, useMemo, lazy, Suspense } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Plus, Download, CircleHelp, Info } from 'lucide-react'
 import { IndexedDBDocStore } from '@/collab/storage/IndexedDBDocStore'
@@ -14,11 +14,11 @@ import TimelineCard from '@/components/TimelineCard'
 import AuthButton from '@/components/AuthButton'
 import ThemeToggle from '@/components/ThemeToggle'
 import { useAuth } from '@/hooks/useAuth'
-import { Globe } from 'lucide-react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { fetchMyTimelines, deleteSharedTimeline } from '@/api/timelineShareApi'
 import { track } from '@/utils/analytics'
 import { useChangelogToast } from '@/hooks/useChangelogToast'
+import { mergeTimelineList, type HomeTimelineItem } from './homeTimelineList'
 
 const CreateTimelineDialog = lazy(() => import('@/components/CreateTimelineDialog'))
 const ImportFFLogsDialog = lazy(() => import('@/components/ImportFFLogsDialog'))
@@ -37,29 +37,30 @@ export default function HomePage() {
   const [showAboutTip, setShowAboutTip] = useState(
     () => !localStorage.getItem('about-tip-dismissed')
   )
-  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
-  const [timelineToDelete, setTimelineToDelete] = useState<string | null>(null)
-  const [deletePublishedConfirmOpen, setDeletePublishedConfirmOpen] = useState(false)
-  const [publishedTimelineToDelete, setPublishedTimelineToDelete] = useState<string | null>(null)
+  const [pendingDelete, setPendingDelete] = useState<HomeTimelineItem | null>(null)
 
-  const [timelines, setTimelines] = useState<LocalDocMeta[]>([])
+  const [metas, setMetas] = useState<LocalDocMeta[]>([])
 
-  const loadTimelines = useCallback(async () => {
+  const loadMetas = useCallback(async () => {
     const store = new IndexedDBDocStore()
     await store.open()
-    const all = await store.getAllMeta()
-    setTimelines(all.sort((a, b) => b.updatedAt - a.updatedAt))
+    setMetas(await store.getAllMeta())
   }, [])
 
   useEffect(() => {
-    void loadTimelines() // eslint-disable-line react-hooks/set-state-in-effect
-  }, [loadTimelines])
+    void loadMetas() // eslint-disable-line react-hooks/set-state-in-effect
+  }, [loadMetas])
 
   const { data: myTimelines } = useQuery({
     queryKey: ['myTimelines'],
     queryFn: fetchMyTimelines,
     enabled: isLoggedIn,
   })
+
+  const timelineList = useMemo(
+    () => mergeTimelineList(metas, myTimelines ?? []),
+    [metas, myTimelines]
+  )
 
   const handleCreateNew = () => {
     track('timeline-create-start')
@@ -71,9 +72,32 @@ export default function HomePage() {
     setShowImportDialog(true)
   }
 
-  const handleDeleteTimeline = (id: string) => {
-    setTimelineToDelete(id)
-    setDeleteConfirmOpen(true)
+  const handleDeleteRequest = (item: HomeTimelineItem) => setPendingDelete(item)
+
+  const handleDeleteConfirm = async () => {
+    const item = pendingDelete
+    if (!item) return
+    try {
+      if (item.kind === 'published') {
+        await deleteSharedTimeline(item.id)
+        await queryClient.invalidateQueries({ queryKey: ['myTimelines'] })
+      }
+      // 三种 kind 都要删本地记录（published 取消发布后亦删本地缓存）
+      const store = new IndexedDBDocStore()
+      await store.open()
+      await store.deleteDoc(item.id)
+      await loadMetas()
+      toast.success(
+        item.kind === 'published'
+          ? '已取消发布'
+          : item.kind === 'visited'
+            ? '已从列表移除'
+            : '时间轴已删除'
+      )
+    } catch (err) {
+      toast.error(`操作失败：${err instanceof Error ? err.message : '未知错误'}`)
+    }
+    setPendingDelete(null)
   }
 
   return (
@@ -164,65 +188,30 @@ export default function HomePage() {
           </button>
         </div>
 
-        {/* Local Timelines */}
-        {timelines.length > 0 && (
+        {/* 统一时间轴列表 */}
+        {timelineList.length > 0 && (
           <section className="mb-12">
-            <h2 className="text-xl font-semibold mb-4">本地时间轴</h2>
+            <h2 className="text-xl font-semibold mb-4">我的时间轴</h2>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {timelines.map(meta => (
+              {timelineList.map(item => (
                 <TimelineCard
-                  key={meta.docId}
+                  key={item.id}
                   timeline={{
-                    id: meta.docId,
-                    name: meta.name,
-                    encounterId: String(meta.encounterId),
-                    createdAt: meta.createdAt,
-                    updatedAt: meta.updatedAt,
-                    composition: meta.composition,
-                    kind: meta.kind,
+                    id: item.id,
+                    name: item.name,
+                    kind: item.kind,
+                    encounterId: String(item.encounterId),
+                    createdAt: item.createdAt,
+                    updatedAt: item.updatedAt,
+                    composition: item.composition,
                   }}
                   onClick={() => {
-                    track('timeline-open', { source: 'local' })
-                    navigate(`/timeline/${meta.docId}`)
+                    track('timeline-open', { source: item.kind })
+                    navigate(`/timeline/${item.id}`)
                   }}
                   onDelete={e => {
                     e.stopPropagation()
-                    handleDeleteTimeline(meta.docId)
-                  }}
-                />
-              ))}
-            </div>
-          </section>
-        )}
-
-        {/* 已发布的时间轴 */}
-        {isLoggedIn && myTimelines && myTimelines.length > 0 && (
-          <section className="mb-12">
-            <h2 className="text-xl font-semibold mb-4 flex items-center gap-2">
-              <Globe className="w-5 h-5" />
-              已发布
-            </h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {myTimelines.map(timeline => (
-                <TimelineCard
-                  key={timeline.id}
-                  timeline={{
-                    id: timeline.id,
-                    name: timeline.name,
-                    encounterId: '',
-                    createdAt: timeline.publishedAt,
-                    updatedAt: timeline.updatedAt,
-                    composition: timeline.composition,
-                    kind: 'published' as const,
-                  }}
-                  onClick={() => {
-                    track('timeline-open', { source: 'published' })
-                    navigate(`/timeline/${timeline.id}`)
-                  }}
-                  onDelete={e => {
-                    e.stopPropagation()
-                    setPublishedTimelineToDelete(timeline.id)
-                    setDeletePublishedConfirmOpen(true)
+                    handleDeleteRequest(item)
                   }}
                 />
               ))}
@@ -245,58 +234,38 @@ export default function HomePage() {
           <CreateTimelineDialog
             open={showCreateDialog}
             onClose={() => setShowCreateDialog(false)}
-            onCreated={loadTimelines}
+            onCreated={loadMetas}
           />
         )}
         {showImportDialog && (
           <ImportFFLogsDialog
             open={showImportDialog}
             onClose={() => setShowImportDialog(false)}
-            onImported={loadTimelines}
+            onImported={loadMetas}
           />
         )}
       </Suspense>
 
-      {/* 删除本地时间轴确认 */}
+      {/* 统一删除/移除确认 */}
       <ConfirmDialog
-        open={deleteConfirmOpen}
-        onOpenChange={setDeleteConfirmOpen}
-        title="删除时间轴"
-        description="确定要删除这个时间轴吗？"
+        open={pendingDelete !== null}
+        onOpenChange={open => !open && setPendingDelete(null)}
+        title={
+          pendingDelete?.kind === 'published'
+            ? '取消发布'
+            : pendingDelete?.kind === 'visited'
+              ? '从列表移除'
+              : '删除时间轴'
+        }
+        description={
+          pendingDelete?.kind === 'published'
+            ? '取消发布后，获得链接的人将无法再访问该时间轴。确定要取消发布吗？'
+            : pendingDelete?.kind === 'visited'
+              ? '仅从你的本地列表移除该时间轴的记录，不影响原时间轴。'
+              : '确定要删除这个时间轴吗？'
+        }
         variant="destructive"
-        onConfirm={async () => {
-          if (timelineToDelete) {
-            const store = new IndexedDBDocStore()
-            await store.open()
-            await store.deleteDoc(timelineToDelete)
-            await loadTimelines()
-            setTimelineToDelete(null)
-            toast.success('时间轴已删除')
-          }
-          setDeleteConfirmOpen(false)
-        }}
-      />
-
-      {/* 取消发布确认 */}
-      <ConfirmDialog
-        open={deletePublishedConfirmOpen}
-        onOpenChange={setDeletePublishedConfirmOpen}
-        title="取消发布"
-        description="取消发布后，获得链接的人将无法再访问该时间轴。确定要取消发布吗？"
-        variant="destructive"
-        onConfirm={async () => {
-          if (publishedTimelineToDelete) {
-            try {
-              await deleteSharedTimeline(publishedTimelineToDelete)
-              await queryClient.invalidateQueries({ queryKey: ['myTimelines'] })
-              toast.success('已取消发布')
-            } catch (err) {
-              toast.error(`删除失败：${err instanceof Error ? err.message : '未知错误'}`)
-            }
-            setPublishedTimelineToDelete(null)
-          }
-          setDeletePublishedConfirmOpen(false)
-        }}
+        onConfirm={handleDeleteConfirm}
       />
     </div>
   )

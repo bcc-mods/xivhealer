@@ -13,6 +13,8 @@
  */
 
 import { create } from 'zustand'
+import { toast } from 'sonner'
+import { useUIStore } from '@/store/uiStore'
 import type { Timeline, DamageEvent, CastEvent, Composition, Annotation } from '@/types/timeline'
 import type { PartyState } from '@/types/partyState'
 import type { ActionExecutionContext, EncounterStatistics } from '@/types/mitigation'
@@ -86,6 +88,8 @@ interface TimelineState {
   pendingRequestCount: number
   /** 是否已发布到云端 */
   isPublished: boolean
+  /** 当前会话角色（设计文档 §3.2） */
+  sessionRole: 'local' | 'author' | 'editor' | 'viewer'
   /** 其他协作者的 awareness(已排除自身);非 editor 模式恒为空 */
   peers: PeerState[]
 
@@ -93,7 +97,7 @@ interface TimelineState {
   /** 打开一条时间轴:创建 SyncEngine,首帧投影 */
   openTimeline: (
     docId: string,
-    opts?: { seedContent?: TimelineContent; published?: boolean }
+    opts: { role: 'local' | 'author' | 'editor'; seedContent?: TimelineContent }
   ) => Promise<void>
   /** viewer 模式:直接用服务端 snapshot 只读渲染,不建引擎 */
   setViewerSnapshot: (timeline: Timeline) => void
@@ -180,6 +184,7 @@ const initialUiState = {
   connectionStatus: 'disconnected' as ConnectionStatus,
   pendingRequestCount: 0,
   isPublished: false,
+  sessionRole: 'local' as const,
   peers: [] as PeerState[],
 }
 
@@ -259,7 +264,12 @@ export const useTimelineStore = create<TimelineState>()((set, get) => {
     engine.connectRemote(
       () => useAuthStore.getState().getValidToken(),
       status => set({ connectionStatus: status }),
-      count => set({ pendingRequestCount: count })
+      count => set({ pendingRequestCount: count }),
+      () => {
+        // 编辑权限被撤销：降级为 viewer，由 viewer cause 接管只读
+        set({ sessionRole: 'viewer' })
+        toast.error('你的编辑权限已被移除')
+      }
     )
     // 设本地 awareness user(昵称 + 颜色),并订阅 peers 变化
     const auth = useAuthStore.getState()
@@ -307,9 +317,11 @@ export const useTimelineStore = create<TimelineState>()((set, get) => {
         canRedo: false,
         connectionStatus: 'disconnected',
         pendingRequestCount: 0,
-        isPublished: !!opts?.published,
+        isPublished: opts.role !== 'local',
+        sessionRole: opts.role,
         peers: [],
       })
+      useUIStore.setState({ manualLock: false })
 
       const seedContent = opts?.seedContent
       // seed:若内容缺 statData,补空结构(只存用户覆盖值)
@@ -353,7 +365,7 @@ export const useTimelineStore = create<TimelineState>()((set, get) => {
       }
 
       // editor 模式:挂 remote(WS 连接 → load-doc → 双向同步)
-      if (opts?.published) {
+      if (opts.role !== 'local') {
         wireRemote(engine)
       }
     },
@@ -375,6 +387,7 @@ export const useTimelineStore = create<TimelineState>()((set, get) => {
         engine: null,
         timeline,
         isPublished: true,
+        sessionRole: 'viewer',
         connectionStatus: 'disconnected',
         pendingRequestCount: 0,
         canUndo: false,
@@ -383,13 +396,14 @@ export const useTimelineStore = create<TimelineState>()((set, get) => {
         selectedCastEventId: null,
         peers: [],
       })
+      useUIStore.setState({ manualLock: false })
       if (timeline.composition) get().initializePartyState(timeline.composition)
     },
 
     attachRemote: () => {
       const engine = get().engine
       if (!engine || engine.hasRemote) return
-      set({ isPublished: true })
+      set({ isPublished: true, sessionRole: 'author' })
       wireRemote(engine)
     },
 

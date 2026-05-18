@@ -120,7 +120,7 @@ export default function EditorPage() {
               navigate(`/timeline/${localId}`, { replace: true })
               return
             }
-            await openTimeline(id, { published: true })
+            await openTimeline(id, { role: 'editor' })
             if (ignore) return
             setMode('editor')
             // 取角色信息(用于共享 popover);使用已拿到的响应,失败时默认作者
@@ -143,7 +143,7 @@ export default function EditorPage() {
             }
             return
           } else {
-            await openTimeline(id)
+            await openTimeline(id, { role: 'local' })
             if (!ignore) setMode('local')
           }
           return
@@ -159,7 +159,7 @@ export default function EditorPage() {
           hasPendingRequest: res.hasPendingRequest,
         })
         if (res.role === 'editor') {
-          await openTimeline(id, { published: true })
+          await openTimeline(id, { role: 'editor' })
           if (ignore) return
           // openTimeline 已把计数清 0,在其后播种
           useTimelineStore.setState({ pendingRequestCount: res.pendingRequestCount })

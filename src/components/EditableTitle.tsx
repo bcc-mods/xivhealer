@@ -45,6 +45,10 @@ export default function EditableTitle({
     }
   }, [editValue, isEditing])
 
+  useEffect(() => {
+    if (readOnly && isEditing) setIsEditing(false)
+  }, [readOnly, isEditing])
+
   const handleSave = () => {
     const trimmed = editValue.trim()
     if (trimmed && trimmed !== value) {

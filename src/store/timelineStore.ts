@@ -270,6 +270,8 @@ export const useTimelineStore = create<TimelineState>()((set, get) => {
       count => set({ pendingRequestCount: count }),
       () => {
         // 编辑权限被撤销：降级为 viewer，由 viewer cause 接管只读
+        peersUnsub?.()
+        peersUnsub = null
         set({ sessionRole: 'viewer' })
         toast.error('你的编辑权限已被移除')
       }

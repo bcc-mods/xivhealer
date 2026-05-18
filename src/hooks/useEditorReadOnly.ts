@@ -1,14 +1,6 @@
-/**
- * 获取编辑器的只读状态
- * 回放模式下强制只读
- */
-
-import { useTimelineStore } from '@/store/timelineStore'
-import { useUIStore } from '@/store/uiStore'
+/** 内容编辑是否只读 —— useEditLock 的便捷别名，内容类组件沿用 */
+import { useEditLock } from './useEditLock'
 
 export function useEditorReadOnly(): boolean {
-  const timeline = useTimelineStore(state => state.timeline)
-  const manualLock = useUIStore(state => state.manualLock)
-  const isReplayMode = timeline?.isReplayMode || false
-  return isReplayMode || manualLock
+  return !useEditLock().can('content')
 }

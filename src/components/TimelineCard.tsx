@@ -31,6 +31,13 @@ export default function TimelineCard({ timeline, onClick, onDelete }: TimelineCa
     ? sortJobsByOrder(composition.players, p => p.job).map(p => p.job)
     : []
 
+  const deleteLabel =
+    timeline.kind === 'local'
+      ? '删除'
+      : timeline.kind === 'published'
+        ? '取消发布并删除'
+        : '从列表移除'
+
   return (
     <div
       className="border rounded-lg p-4 hover:border-primary transition-colors cursor-pointer group"
@@ -51,13 +58,8 @@ export default function TimelineCard({ timeline, onClick, onDelete }: TimelineCa
         {onDelete && (
           <button
             onClick={onDelete}
-            title={
-              timeline.kind === 'local'
-                ? '删除'
-                : timeline.kind === 'published'
-                  ? '取消发布并删除'
-                  : '从列表移除'
-            }
+            title={deleteLabel}
+            aria-label={deleteLabel}
             className="p-1 shrink-0 hover:bg-destructive/10 hover:text-destructive rounded transition-colors"
           >
             <Trash2 className="w-4 h-4" />

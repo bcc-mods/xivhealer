@@ -31,7 +31,7 @@ new_sqlite_classes = ["TimelineDoc"]
 
 [[kv_namespaces]]
 binding = "healerbook_snapshots"
-id = "PLACEHOLDER_DEV_KV_ID"
+id = "571cd2c52ccc45c88b22dea53910e163"
 
 # 开发环境
 [env.development]
@@ -46,7 +46,7 @@ id = "b2d47d0e3be342248906a82ea3a540d5"
 
 [[env.development.kv_namespaces]]
 binding = "healerbook_snapshots"
-id = "PLACEHOLDER_DEV_KV_ID"
+id = "571cd2c52ccc45c88b22dea53910e163"
 
 [[env.development.durable_objects.bindings]]
 name = "TIMELINE_DOC"
@@ -73,7 +73,7 @@ id = "4d48c91437374775b166165a05d56839"
 
 [[env.production.kv_namespaces]]
 binding = "healerbook_snapshots"
-id = "PLACEHOLDER_DEV_KV_ID"
+id = "571cd2c52ccc45c88b22dea53910e163"
 
 [[env.production.durable_objects.bindings]]
 name = "TIMELINE_DOC"

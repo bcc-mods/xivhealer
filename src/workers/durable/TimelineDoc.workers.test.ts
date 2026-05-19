@@ -188,6 +188,42 @@ describe('TimelineDoc WebSocket 接入', () => {
     expect(await stub.getSnapshotJson()).toBeNull()
   })
 
+  it('ensureMetaName 给缺 name 的 doc 补名字(非破坏性)', async () => {
+    const docName = 't-ensure-name-1'
+    const stub = env.TIMELINE_DOC.get(env.TIMELINE_DOC.idFromName(docName))
+    // 模拟旧版迁移留下的坏数据:有 meta 但无 name
+    const seedDoc = new Y.Doc()
+    seedDoc.getMap('meta').set('createdAt', 1)
+    await stub.seed(Y.encodeStateAsUpdate(seedDoc))
+    expect((await stub.getSnapshotJson())!.name).toBe('')
+
+    const patched = await stub.ensureMetaName('补的名字')
+    expect(patched).toBe(true)
+    expect((await stub.getSnapshotJson())!.name).toBe('补的名字')
+  })
+
+  it('ensureMetaName 对已有 name 的 doc 不动', async () => {
+    const docName = 't-ensure-name-2'
+    const stub = env.TIMELINE_DOC.get(env.TIMELINE_DOC.idFromName(docName))
+    const seedDoc = new Y.Doc()
+    seedDoc.getMap('meta').set('name', '原名')
+    await stub.seed(Y.encodeStateAsUpdate(seedDoc))
+
+    const patched = await stub.ensureMetaName('新名')
+    expect(patched).toBe(false)
+    expect((await stub.getSnapshotJson())!.name).toBe('原名')
+  })
+
+  it('ensureMetaName 对空 doc / 空 name 是 no-op', async () => {
+    const stub = env.TIMELINE_DOC.get(env.TIMELINE_DOC.idFromName('t-ensure-name-3'))
+    expect(await stub.ensureMetaName('X')).toBe(false)
+
+    const seedDoc = new Y.Doc()
+    seedDoc.getMap('meta').set('createdAt', 1)
+    await stub.seed(Y.encodeStateAsUpdate(seedDoc))
+    expect(await stub.ensureMetaName('')).toBe(false)
+  })
+
   it('fetch /connect 把 timelineId 持久化到 storage["docId"]', async () => {
     const docName = 't-persist-docid'
     const stub = env.TIMELINE_DOC.get(env.TIMELINE_DOC.idFromName(docName))

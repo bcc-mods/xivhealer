@@ -13,6 +13,7 @@ import * as Y from 'yjs'
 import { encodeStateVectorFromUpdate, diffUpdate } from 'yjs'
 import { verifyToken } from '../jwt'
 import { projectTimeline } from '@/collab/docSchema'
+import { Y_MAP } from '@/collab/constants'
 import type { Timeline } from '@/types/timeline'
 
 /** 挂在每个 WebSocket 上的鉴权状态(扛 hibernation) */
@@ -257,6 +258,27 @@ export class TimelineDoc extends DurableObject<Env> {
   async seed(bin: Uint8Array): Promise<void> {
     if (!this.store.isEmpty()) return
     this.store.seedSnapshot(bin)
+  }
+
+  /**
+   * 迁移修复用:若 doc 的 `meta.name` 为空,追加一个只设 `name` 的 Yjs 增量。
+   *
+   * 旧版迁移漏取 `timelines.name` 列,把 DO seed 成了缺名字的坏数据;而 `seed`
+   * 幂等不会覆盖,故重跑迁移须经此方法回填。非破坏性(Yjs 合并,不碰其他字段),
+   * 幂等(已有 name 则跳过)。返回是否实际打了补丁。
+   */
+  async ensureMetaName(name: string): Promise<boolean> {
+    if (!name || this.store.isEmpty()) return false
+    const doc = new Y.Doc()
+    Y.applyUpdate(doc, this.store.getMergedDoc())
+    const current = doc.getMap(Y_MAP.meta).get('name')
+    if (typeof current === 'string' && current.length > 0) return false
+    const before = Y.encodeStateVector(doc)
+    doc.transact(() => {
+      doc.getMap(Y_MAP.meta).set('name', name)
+    })
+    this.store.appendUpdate(Y.encodeStateAsUpdate(doc, before))
+    return true
   }
 
   /** 公开读用:把当前合并状态投影成 Timeline JSON;空文档返回 null */

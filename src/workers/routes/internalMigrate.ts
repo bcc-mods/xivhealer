@@ -13,6 +13,7 @@ const app = new Hono<AppEnv>()
 interface TimelineRow {
   id: string
   author_id: string
+  name: string
   content: string
 }
 
@@ -41,21 +42,31 @@ function toContent(timeline: ReturnType<typeof parseFromAny>): TimelineContent {
 /** 把旧 D1 timelines.content → Y.Doc → 灌入对应 DO。幂等（DO.seed 幂等）。 */
 app.post('/migrate', requireSyncToken, async c => {
   const rows = await c.env.healerbook_timelines
-    .prepare('SELECT id, author_id, content FROM timelines')
+    .prepare('SELECT id, author_id, name, content FROM timelines')
     .all<TimelineRow>()
 
   let migrated = 0
   let skipped = 0
+  // repaired:存量 DO 缺 name 被回填的条数(seed 幂等,坏数据靠 ensureMetaName 修)
+  let repaired = 0
   for (const row of rows.results) {
     try {
       const raw = JSON.parse(row.content) as Record<string, unknown>
-      const timeline = parseFromAny(raw, { id: row.id })
+      // 旧数据模型把显示名只存在 timelines.name 列,从未写进 content。
+      // 必须用列里的 name 覆盖,否则迁移后 Y.Doc 的 meta.name 为空。
+      const timeline = parseFromAny(raw, { id: row.id, name: row.name })
       const content = toContent(timeline)
       const bin = encodeStateAsUpdate(buildYDoc(content))
       const stub = c.env.TIMELINE_DOC.get(
         c.env.TIMELINE_DOC.idFromName(row.id)
       ) as unknown as TimelineDoc
       await stub.seed(bin)
+      // seed 幂等:旧版迁移已 seed 的 DO 不会被覆盖,缺 name 的坏数据靠此回填。
+      // 回填后删掉可能陈旧(无 name)的 KV 快照,viewer 即回落到 DO 取最新。
+      if (await stub.ensureMetaName(row.name)) {
+        await c.env.healerbook_snapshots.delete(`tl-snapshot:${row.id}`)
+        repaired++
+      }
       await c.env.healerbook_timelines
         .prepare(
           'INSERT OR IGNORE INTO timeline_editors (timeline_id, user_id, created_at) VALUES (?,?,?)'
@@ -68,7 +79,7 @@ app.post('/migrate', requireSyncToken, async c => {
       skipped++
     }
   }
-  return c.json({ migrated, skipped })
+  return c.json({ migrated, skipped, repaired })
 })
 
 export { app as internalMigrateRoutes }

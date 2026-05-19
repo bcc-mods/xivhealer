@@ -6,12 +6,27 @@ import type { AppEnv } from '../env'
 import { requireAuth } from '../middleware/requireAuth'
 import { tryReadAuth } from '../middleware/tryReadAuth'
 import * as sensitiveWordFilter from '../sensitiveWordFilter'
+import { generateId } from '@/utils/id'
 import type { TimelineDoc } from '../durable/TimelineDoc'
 
 const PublishTimelineRequestSchema = v.object({
   id: v.pipe(v.string(), v.minLength(1), v.maxLength(64)),
   name: v.pipe(v.string(), v.maxLength(200)),
 })
+
+const ID_GEN_MAX_ATTEMPTS = 32
+
+/**
+ * 生成一个不含敏感词的随机 id;连续 32 次都命中敏感词则抛错。
+ * 客户端给的 id 命中敏感词时由发布端点据此换发(见设计文档 §3)。
+ */
+async function generateCleanId(env: AppEnv['Bindings']): Promise<string> {
+  for (let i = 0; i < ID_GEN_MAX_ATTEMPTS; i++) {
+    const candidate = generateId()
+    if (!(await sensitiveWordFilter.containsBannedSubstring(candidate, env))) return candidate
+  }
+  throw new Error('id_generation_failed')
+}
 
 /**
  * 取该 timeline 的 DO stub。
@@ -27,10 +42,17 @@ const app = new Hono<AppEnv>()
 // 发布:把一条本地时间轴注册为云端时间轴
 app.post('/', requireAuth, vValidator('json', PublishTimelineRequestSchema), async c => {
   const auth = c.get('auth')!
-  const { id, name } = c.req.valid('json')
+  const { id: requestedId, name } = c.req.valid('json')
 
+  // 客户端给的 id 命中敏感词时,服务端换发一个干净 id;
+  // 前端 handlePublish 据返回的(可能变更过的)id 做 rekey。
+  let id = requestedId
   if (await sensitiveWordFilter.containsBannedSubstring(id, c.env)) {
-    return c.json({ error: 'id_rejected' }, 409)
+    try {
+      id = await generateCleanId(c.env)
+    } catch {
+      return c.json({ error: 'id_generation_failed' }, 500)
+    }
   }
 
   const now = Math.floor(Date.now() / 1000)

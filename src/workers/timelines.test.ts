@@ -277,7 +277,30 @@ describe('POST /api/timelines', () => {
     expect(body.error).toBe('id_taken')
   })
 
-  it('敏感词过滤命中时返回 409 id_rejected', async () => {
+  it('客户端 id 命中敏感词时,服务端重新生成干净 id 并发布', async () => {
+    const filterModule = await import('./sensitiveWordFilter')
+    const spy = vi.spyOn(filterModule, 'containsBannedSubstring')
+    // 首次(客户端 id 检查)命中,之后(服务端重生成)干净
+    spy.mockResolvedValueOnce(true).mockResolvedValue(false)
+
+    const env = makeMockEnv(makeMockD1())
+    const token = await makeAccessToken('user1', 'TestUser', 'test-secret')
+    const req = new Request('https://example.com/api/timelines', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ id: 'badword-id', name: 'Test' }),
+    })
+    const res = await app.fetch(req, env)
+    expect(res.status).toBe(201)
+    const body = (await res.json()) as { id: string; publishedAt: number }
+    // 服务端换了一个干净 id 返回,前端据此 rekey
+    expect(body.id).not.toBe('badword-id')
+    expect(body.id.length).toBeGreaterThan(0)
+
+    spy.mockRestore()
+  })
+
+  it('重生成 32 次仍全命中敏感词时返回 500 id_generation_failed', async () => {
     const filterModule = await import('./sensitiveWordFilter')
     const spy = vi.spyOn(filterModule, 'containsBannedSubstring')
     spy.mockResolvedValue(true)
@@ -290,9 +313,9 @@ describe('POST /api/timelines', () => {
       body: JSON.stringify({ id: 'badword-id', name: 'Test' }),
     })
     const res = await app.fetch(req, env)
-    expect(res.status).toBe(409)
+    expect(res.status).toBe(500)
     const body = (await res.json()) as { error: string }
-    expect(body.error).toBe('id_rejected')
+    expect(body.error).toBe('id_generation_failed')
 
     spy.mockRestore()
   })

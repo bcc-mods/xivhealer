@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Healerbook · FFLogs Samples Queue Enqueuer
 // @namespace    healerbook
-// @version      1.2.0
+// @version      1.3.0
 // @description  在 FFLogs zone/reports 页面随机抽 20 个 report code 上报给 /api/samples-queue/enqueue
 // @match        https://www.fflogs.com/zone/reports*
 // @grant        GM_setValue
@@ -57,6 +57,10 @@
     apiBase: String(loadSetting('apiBase', DEFAULT_API_BASE)),
     authToken: String(loadSetting('authToken', '')),
     barkKey: String(loadSetting('barkKey', '')),
+    // 刷新前写入页面 #filter-duration-text 的值；空字符串表示不应用
+    durationSeconds: String(loadSetting('durationSeconds', '')),
+    // 自动填充开关：当 enqueue 响应中的 maxDurationSec 大于当前值时写回输入框
+    autoFillDuration: !!loadSetting('autoFillDuration', false),
     lastStatus: '',
   }
 
@@ -219,6 +223,7 @@
           parsed = JSON.parse(res.body)
         } catch (_) {}
         if (parsed) {
+          maybeAutoFillDuration(parsed.maxDurationSec)
           setStatus(
             `OK: recv=${parsed.received} match=${parsed.matched} ins=${parsed.inserted} dup=${parsed.skippedDuplicates} err=${(parsed.errors || []).length}`
           )
@@ -236,9 +241,48 @@
   // ---- UI ----
   let statusEl = null
   let countdownEl = null
+  let durationEl = null
   let refreshTimer = null
   let countdownTimer = null
   let refreshAt = 0
+
+  // 把面板里填的 duration 写到页面 #filter-duration-text 上；只接受合法正整数
+  function syncDurationToPage() {
+    const raw = String(state.durationSeconds || '').trim()
+    if (!/^[1-9]\d*$/.test(raw)) return
+    const target = document.getElementById('filter-duration-text')
+    if (!target) return
+    target.value = raw
+    target.dispatchEvent(new Event('input', { bubbles: true }))
+    target.dispatchEvent(new Event('change', { bubbles: true }))
+  }
+
+  // 调用页面上下文里的 updateDuration()。userscript 与页面是隔离的 JS 上下文，
+  // 不能直接拿到页面定义的函数，注入一段 <script> 即可在页面上下文执行
+  function callPageUpdateDuration() {
+    const s = document.createElement('script')
+    s.textContent =
+      'try { if (typeof updateDuration === "function") updateDuration() } catch (e) { console.error(e) }'
+    document.documentElement.appendChild(s)
+    s.remove()
+  }
+
+  // 自动刷新真正执行的动作：先把 duration 写进页面输入框，再触发页面刷新函数
+  function triggerPageRefresh() {
+    syncDurationToPage()
+    callPageUpdateDuration()
+  }
+
+  // 收到 enqueue 响应后，按开关决定是否用 maxDurationSec 回填面板里的 duration
+  function maybeAutoFillDuration(maxSec) {
+    if (!state.autoFillDuration) return
+    if (typeof maxSec !== 'number' || !Number.isFinite(maxSec) || maxSec <= 0) return
+    const cur = parseInt(String(state.durationSeconds || '').trim(), 10)
+    if (Number.isFinite(cur) && cur >= maxSec) return
+    state.durationSeconds = String(Math.floor(maxSec))
+    saveSetting('durationSeconds', state.durationSeconds)
+    if (durationEl) durationEl.value = state.durationSeconds
+  }
 
   function setStatus(msg) {
     state.lastStatus = msg
@@ -257,12 +301,19 @@
       countdownTimer = null
     }
     if (countdownEl) countdownEl.textContent = ''
-    if (!state.enabled) return
+    // 自动刷新独立于"启用上报"——只受自动刷新开关控制
     if (!state.autoRefresh) return
 
     const actualSeconds = jitteredDelaySeconds(state.intervalSeconds)
     refreshAt = Date.now() + actualSeconds * 1000
-    refreshTimer = setTimeout(() => window.location.reload(), actualSeconds * 1000)
+    refreshTimer = setTimeout(() => {
+      try {
+        triggerPageRefresh()
+      } finally {
+        // 触发后再排下一次，形成循环刷新；不依赖页面 reload 重新跑脚本
+        scheduleRefresh()
+      }
+    }, actualSeconds * 1000)
     if (countdownEl) {
       countdownTimer = setInterval(() => {
         const remaining = Math.max(0, Math.round((refreshAt - Date.now()) / 1000))
@@ -318,6 +369,14 @@
             ${INTERVAL_OPTIONS.map(s => `<option value="${s}" ${s === state.intervalSeconds ? 'selected' : ''}>${s / 60} 分钟</option>`).join('')}
           </select>
         </label>
+        <label style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">
+          Duration (秒)：
+          <input id="hb-duration" type="text" inputmode="numeric" value="${escapeAttr(state.durationSeconds)}" placeholder="正整数；空则不写入" style="flex:1;min-width:0;padding:2px 4px;background:#111827;color:#f3f4f6;border:1px solid #374151;border-radius:4px;" />
+        </label>
+        <label style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">
+          <input id="hb-autofill" type="checkbox" ${state.autoFillDuration ? 'checked' : ''} />
+          自动填充 duration（取响应最大值）
+        </label>
         <details style="margin-bottom:6px;">
           <summary style="cursor:pointer;color:#9ca3af;">高级设置</summary>
           <div style="margin-top:6px;">
@@ -356,18 +415,18 @@
     const runEl = panel.querySelector('#hb-run')
     const collapseEl = panel.querySelector('#hb-collapse')
     const bodyEl = panel.querySelector('#hb-body')
+    durationEl = panel.querySelector('#hb-duration')
+    const autofillEl = panel.querySelector('#hb-autofill')
 
     enabledEl.addEventListener('change', () => {
       state.enabled = enabledEl.checked
       saveSetting('enabled', state.enabled)
+      // 自动刷新已与"启用上报"解耦：不在这里调度刷新，仅控制 enqueue 流程
       if (!state.enabled) {
-        scheduleRefresh() // 内部 guard 会因 enabled=false 取消已排定的刷新
         setStatus('已禁用')
         return
       }
-      // 启用：若本页面还没跑过自动流程则现在跑；否则只重排刷新
       if (pageRunDone) {
-        scheduleRefresh()
         setStatus('已启用')
       } else {
         runAutoFlow()
@@ -394,6 +453,14 @@
     barkEl.addEventListener('change', () => {
       state.barkKey = barkEl.value.trim()
       saveSetting('barkKey', state.barkKey)
+    })
+    durationEl.addEventListener('change', () => {
+      state.durationSeconds = durationEl.value.trim()
+      saveSetting('durationSeconds', state.durationSeconds)
+    })
+    autofillEl.addEventListener('change', () => {
+      state.autoFillDuration = autofillEl.checked
+      saveSetting('autoFillDuration', state.autoFillDuration)
     })
     runEl.addEventListener('click', () => {
       runOnce()
@@ -429,7 +496,7 @@
     })
   }
 
-  // 自动上报流程：等表格 → 上报 → 启动自动刷新计时器
+  // 自动上报流程：等表格 → 上报。自动刷新由 main() / 自动刷新开关独立调度，不在此处启动
   // 受 state.enabled 门控；pageRunDone 保证一次页面加载里只跑一次
   async function runAutoFlow() {
     if (pageRunDone) return
@@ -457,13 +524,22 @@
         setStatus('页面等待失败：' + msg)
       }
     }
-    // 首次上报完成（或失败）后再启动自动刷新计时器，避免 reload 打断进行中的请求
-    // 若被 CF 挡住，不要继续刷新——只会触发更多挑战
-    if (state.autoRefresh && !cfBlocked) scheduleRefresh()
+    // 被 CF 挡住时取消 main 里预排的自动刷新——继续刷新只会触发更多挑战
+    if (cfBlocked && refreshTimer) {
+      clearTimeout(refreshTimer)
+      refreshTimer = null
+      if (countdownTimer) {
+        clearInterval(countdownTimer)
+        countdownTimer = null
+      }
+      if (countdownEl) countdownEl.textContent = ''
+    }
   }
 
   async function main() {
     buildPanel()
+    // 自动刷新独立于启用上报：无论是否启用上报都按开关启动
+    if (state.autoRefresh) scheduleRefresh()
     if (!state.enabled) {
       setStatus('未启用')
       return

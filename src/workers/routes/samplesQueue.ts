@@ -45,17 +45,27 @@ app.post('/enqueue', requireSyncToken, vValidator('json', EnqueueSamplesRequestS
     })
   )
 
-  const entries = picks
-    .filter((p): p is Extract<Pick, { status: 'ok' }> => p.status === 'ok')
-    .map(p => ({ reportCode: p.reportCode, fightID: p.fightID, durationMs: p.durationMs }))
+  const okPicks = picks.filter((p): p is Extract<Pick, { status: 'ok' }> => p.status === 'ok')
+  const entries = okPicks.map(p => ({
+    reportCode: p.reportCode,
+    fightID: p.fightID,
+    durationMs: p.durationMs,
+  }))
 
   const { inserted } = await enqueueRankings(c.env.healerbook_timelines, encounterId, entries)
+
+  // 本批次 FFLogs 战斗记录中最长 duration（向下取整到整秒）；无匹配返回 0
+  const maxDurationSec =
+    okPicks.length === 0
+      ? 0
+      : Math.floor(okPicks.reduce((m, p) => (p.durationMs > m ? p.durationMs : m), 0) / 1000)
 
   return c.json({
     received: reportCodes.length,
     matched: entries.length,
     inserted,
     skippedDuplicates: entries.length - inserted,
+    maxDurationSec,
     noMatch: picks.filter(p => p.status === 'no-match').map(p => p.reportCode),
     errors: picks
       .filter((p): p is Extract<Pick, { status: 'error' }> => p.status === 'error')

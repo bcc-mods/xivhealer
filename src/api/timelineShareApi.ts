@@ -20,7 +20,7 @@ export interface SharedTimelineResponse {
   hasPendingRequest: boolean
   /** 作者视角:当前待处理的申请数;非作者恒 0 */
   pendingRequestCount: number
-  /** viewer 角色携带;editor 角色为 undefined(编辑端连 WS 取全量) */
+  /** KV snapshot;三角色通用。editor/author 用于首屏兜底渲染,KV miss 时为 undefined */
   snapshot?: Timeline
 }
 
@@ -76,7 +76,8 @@ interface RawSharedResponse {
 }
 
 /**
- * 获取共享时间轴的角色与(viewer 的)snapshot。
+ * 获取共享时间轴的角色与 KV snapshot。
+ * snapshot 三角色通用:viewer 用于只读渲染,editor/author 用于首屏兜底,KV miss 时为 undefined。
  * 已登录时 Worker 据 Authorization 头判定 editor / viewer。
  */
 export async function fetchSharedTimeline(id: string): Promise<SharedTimelineResponse> {

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Healerbook · FFLogs Samples Queue Enqueuer
 // @namespace    healerbook
-// @version      1.3.0
+// @version      1.3.1
 // @description  在 FFLogs zone/reports 页面随机抽 20 个 report code 上报给 /api/samples-queue/enqueue
 // @match        https://www.fflogs.com/zone/reports*
 // @grant        GM_setValue
@@ -257,6 +257,20 @@
     target.dispatchEvent(new Event('change', { bubbles: true }))
   }
 
+  // 探测页面上下文里 updateDuration 是否是函数。<script> 在 appendChild 时同步执行，
+  // 通过 documentElement 属性把结果回传到 userscript 上下文
+  function pageHasUpdateDuration() {
+    const flagAttr = 'data-hb-has-updateduration'
+    document.documentElement.removeAttribute(flagAttr)
+    const s = document.createElement('script')
+    s.textContent = `if (typeof updateDuration === "function") document.documentElement.setAttribute(${JSON.stringify(flagAttr)}, '1')`
+    document.documentElement.appendChild(s)
+    s.remove()
+    const has = document.documentElement.hasAttribute(flagAttr)
+    document.documentElement.removeAttribute(flagAttr)
+    return has
+  }
+
   // 调用页面上下文里的 updateDuration()。userscript 与页面是隔离的 JS 上下文，
   // 不能直接拿到页面定义的函数，注入一段 <script> 即可在页面上下文执行
   function callPageUpdateDuration() {
@@ -267,8 +281,15 @@
     s.remove()
   }
 
-  // 自动刷新真正执行的动作：先把 duration 写进页面输入框，再触发页面刷新函数
+  // 自动刷新真正执行的动作：
+  //   有 updateDuration() —— 先把 duration 写进页面输入框，再调用它做局部刷新
+  //   没有 updateDuration() —— 退回到整页 reload；duration 写入此时无意义就跳过
   function triggerPageRefresh() {
+    if (!pageHasUpdateDuration()) {
+      setStatus('页面未提供 updateDuration()，退回整页刷新')
+      window.location.reload()
+      return
+    }
     syncDurationToPage()
     callPageUpdateDuration()
   }

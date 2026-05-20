@@ -169,6 +169,152 @@ describe('RemoteConnection', () => {
     expect(after.some(m => m.type === MSG.PUSH)).toBe(false)
     conn.destroy()
   })
+
+  it('triggers onLoaded after LOAD_REPLY with non-empty missing', async () => {
+    const serverDoc = new Y.Doc()
+    serverDoc.getMap('meta').set('name', 'hello')
+    const missing = Y.encodeStateAsUpdate(serverDoc)
+    const serverSV = Y.encodeStateVector(serverDoc)
+
+    const doc = new Y.Doc()
+    const onLoaded = vi.fn()
+    const conn = new RemoteConnection(
+      'ws://x/connect',
+      doc,
+      new Awareness(doc),
+      () => Promise.resolve('j'),
+      () => {},
+      undefined,
+      undefined,
+      onLoaded
+    )
+    conn.connect()
+    await lastSocket().fireOpen()
+    lastSocket().fireMessage(encodeMessage(MSG.AUTH_OK, new Uint8Array()))
+    expect(onLoaded).not.toHaveBeenCalled()
+    lastSocket().fireMessage(encodeMessage(MSG.LOAD_REPLY, encodeLoadReply(missing, serverSV)))
+    expect(onLoaded).toHaveBeenCalledTimes(1)
+    conn.destroy()
+  })
+
+  it('triggers onLoaded even when LOAD_REPLY missing is empty', async () => {
+    const doc = new Y.Doc()
+    const onLoaded = vi.fn()
+    const conn = new RemoteConnection(
+      'ws://x/connect',
+      doc,
+      new Awareness(doc),
+      () => Promise.resolve('j'),
+      () => {},
+      undefined,
+      undefined,
+      onLoaded
+    )
+    conn.connect()
+    await lastSocket().fireOpen()
+    lastSocket().fireMessage(encodeMessage(MSG.AUTH_OK, new Uint8Array()))
+    // missing 为空 + server SV 为空 doc 的 SV
+    const serverDoc = new Y.Doc()
+    const emptyMissing = new Uint8Array()
+    const serverSV = Y.encodeStateVector(serverDoc)
+    lastSocket().fireMessage(encodeMessage(MSG.LOAD_REPLY, encodeLoadReply(emptyMissing, serverSV)))
+    expect(onLoaded).toHaveBeenCalledTimes(1)
+    conn.destroy()
+  })
+
+  it('does not trigger onLoaded on 1008 close before LOAD_REPLY', async () => {
+    const doc = new Y.Doc()
+    const onLoaded = vi.fn()
+    const conn = new RemoteConnection(
+      'ws://x/connect',
+      doc,
+      new Awareness(doc),
+      () => Promise.resolve('j'),
+      () => {},
+      undefined,
+      undefined,
+      onLoaded
+    )
+    conn.connect()
+    await lastSocket().fireOpen()
+    lastSocket().fireClose(1008)
+    expect(onLoaded).not.toHaveBeenCalled()
+    conn.destroy()
+  })
+
+  it('does not trigger onLoaded on 4001 close before LOAD_REPLY', async () => {
+    const doc = new Y.Doc()
+    const onLoaded = vi.fn()
+    const conn = new RemoteConnection(
+      'ws://x/connect',
+      doc,
+      new Awareness(doc),
+      () => Promise.resolve('j'),
+      () => {},
+      undefined,
+      undefined,
+      onLoaded
+    )
+    conn.connect()
+    await lastSocket().fireOpen()
+    lastSocket().fireClose(4001)
+    expect(onLoaded).not.toHaveBeenCalled()
+    conn.destroy()
+  })
+
+  it('does not trigger onLoaded when auth token missing', async () => {
+    const doc = new Y.Doc()
+    const onLoaded = vi.fn()
+    const conn = new RemoteConnection(
+      'ws://x/connect',
+      doc,
+      new Awareness(doc),
+      () => Promise.resolve(null),
+      () => {},
+      undefined,
+      undefined,
+      onLoaded
+    )
+    conn.connect()
+    await lastSocket().fireOpen()
+    expect(onLoaded).not.toHaveBeenCalled()
+    conn.destroy()
+  })
+
+  it('triggers onLoaded again on reconnect LOAD_REPLY (caller handles idempotency)', async () => {
+    const serverDoc = new Y.Doc()
+    serverDoc.getMap('meta').set('name', 'r')
+    const missing = Y.encodeStateAsUpdate(serverDoc)
+    const serverSV = Y.encodeStateVector(serverDoc)
+    vi.useFakeTimers()
+
+    const doc = new Y.Doc()
+    const onLoaded = vi.fn()
+    const conn = new RemoteConnection(
+      'ws://x/connect',
+      doc,
+      new Awareness(doc),
+      () => Promise.resolve('j'),
+      () => {},
+      undefined,
+      undefined,
+      onLoaded
+    )
+    conn.connect()
+    await lastSocket().fireOpen()
+    lastSocket().fireMessage(encodeMessage(MSG.AUTH_OK, new Uint8Array()))
+    lastSocket().fireMessage(encodeMessage(MSG.LOAD_REPLY, encodeLoadReply(missing, serverSV)))
+    expect(onLoaded).toHaveBeenCalledTimes(1)
+
+    // 模拟断线 → 退避重连 → 再次 LOAD_REPLY
+    lastSocket().fireClose(1006)
+    vi.advanceTimersByTime(1000)
+    await lastSocket().fireOpen()
+    lastSocket().fireMessage(encodeMessage(MSG.AUTH_OK, new Uint8Array()))
+    lastSocket().fireMessage(encodeMessage(MSG.LOAD_REPLY, encodeLoadReply(missing, serverSV)))
+    expect(onLoaded).toHaveBeenCalledTimes(2)
+    conn.destroy()
+  })
 })
 
 describe('RemoteConnection awareness', () => {

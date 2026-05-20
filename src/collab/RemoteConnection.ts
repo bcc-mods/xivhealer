@@ -28,6 +28,8 @@ export class RemoteConnection {
   private readonly onEditRequest: ((count: number) => void) | undefined
   /** 编辑权限被撤销（WS 4001）时触发一次 */
   private readonly onRevoked: (() => void) | undefined
+  /** 远端 doc 应用完成(LOAD_REPLY 处理末尾)触发;每次 LOAD_REPLY 都会触发,幂等性由上层处理 */
+  private readonly onLoaded: (() => void) | undefined
 
   private ws: WebSocket | null = null
   private status: ConnectionStatus = 'disconnected'
@@ -54,7 +56,8 @@ export class RemoteConnection {
     getAuthToken: () => Promise<string | null>,
     onStatus: (status: ConnectionStatus) => void,
     onEditRequest?: (count: number) => void,
-    onRevoked?: () => void
+    onRevoked?: () => void,
+    onLoaded?: () => void
   ) {
     this.url = url
     this.doc = doc
@@ -63,6 +66,7 @@ export class RemoteConnection {
     this.onStatus = onStatus
     this.onEditRequest = onEditRequest
     this.onRevoked = onRevoked
+    this.onLoaded = onLoaded
   }
 
   /** 开始连接(幂等:已在连接中或已终态关闭则忽略) */
@@ -148,6 +152,7 @@ export class RemoteConnection {
       if (missing.length > 0) Y.applyUpdate(this.doc, missing, REMOTE_ORIGIN)
       const ours = Y.encodeStateAsUpdate(this.doc, stateVector)
       this.ws?.send(encodeMessage(MSG.PUSH, ours))
+      this.onLoaded?.()
       return
     }
     if (msg.type === MSG.BROADCAST) {

@@ -431,6 +431,23 @@ describe('wrapAsSoumaITimeline', () => {
     const wrapped = wrapAsSoumaITimeline(makeTimeline(), 1, 'abc\ndef')
     expect(wrapped.timeline).toBe('abc\ndef')
   })
+
+  it('encounter.id > 0 时输出 fflogsBoss', () => {
+    const timeline = makeTimeline({
+      encounter: { id: 1079, name: 'FRU', displayName: 'FRU', zone: '', damageEvents: [] },
+    })
+    const wrapped = wrapAsSoumaITimeline(timeline, 1, 'text')
+    expect(wrapped.condition.fflogsBoss).toBe(1079)
+  })
+
+  it('encounter.id 为 0（其他/无副本）时省略 fflogsBoss', () => {
+    const timeline = makeTimeline({
+      encounter: { id: 0, name: '', displayName: '', zone: '', damageEvents: [] },
+    })
+    const wrapped = wrapAsSoumaITimeline(timeline, 1, 'text')
+    expect(wrapped.condition.fflogsBoss).toBeUndefined()
+    expect('fflogsBoss' in wrapped.condition).toBe(false)
+  })
 })
 
 import LZString from 'lz-string'

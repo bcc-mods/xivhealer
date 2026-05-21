@@ -134,6 +134,7 @@ export default function CreateTimelineDialog({
                     ))}
                   </SelectGroup>
                 ))}
+                <SelectItem value="0">其他（不指定副本）</SelectItem>
               </SelectContent>
             </Select>
           </div>

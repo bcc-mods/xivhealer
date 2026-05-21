@@ -26,6 +26,7 @@ interface JsonBody {
   }>
   r?: 1
   fs?: { rc: string; fi: number }
+  gz?: number
   ca?: number
   ua?: number
 }
@@ -239,6 +240,34 @@ describe('handleFFLogsImport', () => {
           t: 10,
         })
       )
+    })
+
+    it('FFLogs 返回 gameZoneID 时序列化应带 gz（供 Souma 识别未预置副本区域）', async () => {
+      mockGetReport.mockResolvedValue(makeV1Report([makeFight(5, { gameZoneID: 1321 })]))
+      mockGetEvents.mockResolvedValue({ events: [] })
+
+      const request = new Request(
+        'https://example.com/api/fflogs/import?reportCode=ABC123&fightId=5'
+      )
+      const response = await app.fetch(request, mockEnv)
+
+      expect(response.status).toBe(200)
+      const timeline = (await response.json()) as JsonBody
+      expect(timeline.gz).toBe(1321)
+    })
+
+    it('FFLogs 未返回 gameZoneID 时不应输出 gz', async () => {
+      mockGetReport.mockResolvedValue(makeV1Report([makeFight(5)]))
+      mockGetEvents.mockResolvedValue({ events: [] })
+
+      const request = new Request(
+        'https://example.com/api/fflogs/import?reportCode=ABC123&fightId=5'
+      )
+      const response = await app.fetch(request, mockEnv)
+
+      expect(response.status).toBe(200)
+      const timeline = (await response.json()) as JsonBody
+      expect(timeline.gz).toBeUndefined()
     })
 
     it('匿名报告代码 a:ABC123 应正确传递给 getReport', async () => {

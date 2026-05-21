@@ -13,7 +13,8 @@ export function useEncounterStatistics(encounterId: number | undefined) {
   const query = useQuery({
     queryKey: ['encounterStatistics', encounterId],
     queryFn: () => getEncounterStatistics(encounterId!),
-    enabled: encounterId != null,
+    // encounterId 为 0 表示"其他"（无特定副本），不发统计请求
+    enabled: encounterId != null && encounterId > 0,
     staleTime: 1000 * 60 * 60 * 12, // 12 小时
   })
 

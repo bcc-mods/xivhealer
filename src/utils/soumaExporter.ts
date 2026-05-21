@@ -102,7 +102,9 @@ export function buildSoumaTimelineText(
 /** ff14-overlay-vue 的 ITimeline 最小形态 */
 export interface SoumaITimeline {
   name: string
-  condition: { zoneId: string; jobs: Job[] }
+  /** fflogsBoss：FFLogs V1 的 event.fights[x].boss（即 encounter.id），
+   *  Souma 据此自动识别门神/本体 phase。无特定副本（id<=0）时省略。 */
+  condition: { zoneId: string; jobs: Job[]; fflogsBoss?: number }
   timeline: string
   codeFight: string
   create: string
@@ -114,6 +116,8 @@ export interface SoumaITimeline {
  *   1. timeline.gameZoneId
  *   2. 静态表 getEncounterById(timeline.encounter.id)?.gameZoneId
  *   3. "0"
+ * fflogsBoss 取 encounter.id（即 FFLogs fights[x].boss），>0 时输出供 Souma 自动识别 phase；
+ * "其他"时间轴（id<=0）省略该字段。
  */
 export function wrapAsSoumaITimeline(
   timeline: Timeline,
@@ -126,9 +130,15 @@ export function wrapAsSoumaITimeline(
   const staticZoneId = getEncounterById(timeline.encounter.id)?.gameZoneId
   const zoneId = String(timeline.gameZoneId ?? staticZoneId ?? 0)
 
+  const fflogsBoss = timeline.encounter.id
+
   return {
     name: `${timeline.name} - ${getJobName(jobCode)}`,
-    condition: { zoneId, jobs: [jobCode] },
+    condition: {
+      zoneId,
+      jobs: [jobCode],
+      ...(fflogsBoss > 0 ? { fflogsBoss } : {}),
+    },
     timeline: timelineText,
     codeFight: 'Healerbook 导出',
     create: new Date().toLocaleString(),

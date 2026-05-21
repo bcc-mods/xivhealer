@@ -142,6 +142,8 @@ app.get('/import', async c => {
         zone: report.title || '',
         damageEvents: [],
       },
+      // FFLogs 返回的游戏内 ZoneID，用于 Souma 导出时的副本识别（未预置在静态表的副本只能靠它）
+      ...(fight.gameZoneId != null ? { gameZoneId: fight.gameZoneId } : {}),
       composition,
       damageEvents,
       castEvents,

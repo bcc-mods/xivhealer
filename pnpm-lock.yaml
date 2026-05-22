@@ -95,6 +95,9 @@ importers:
       ky:
         specifier: ^1.14.3
         version: 1.14.3
+      lib0:
+        specifier: ^0.2.117
+        version: 0.2.117
       lucide-react:
         specifier: ^0.574.0
         version: 0.574.0(react@19.2.4)

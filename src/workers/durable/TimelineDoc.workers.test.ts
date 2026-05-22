@@ -2,7 +2,15 @@ import { describe, it, expect, vi } from 'vitest'
 import { env, runDurableObjectAlarm, runInDurableObject } from 'cloudflare:test'
 import * as Y from 'yjs'
 import { signAccessToken } from '@/workers/jwt'
-import { encodeMessage, MSG, decodeMessage, decodeLoadReply } from '@/collab/syncProtocol'
+import { Awareness } from 'y-protocols/awareness'
+import {
+  encodeMessage,
+  MSG,
+  decodeMessage,
+  decodeLoadReply,
+  encodeAwarenessBinary,
+  applyAwarenessBinary,
+} from '@/collab/syncProtocol'
 
 describe('TimelineDoc WebSocket 接入', () => {
   it('/connect 返回 101 并升级为 WebSocket', async () => {
@@ -243,8 +251,11 @@ describe('TimelineDoc WebSocket 接入', () => {
       // 连接 A 鉴权
       const wsA = await authConnect(docName, 'ua-snap')
 
-      // A 发送一帧 awareness
-      const awarePayload = new Uint8Array([1, 2, 3, 4])
+      // A 发送一帧 awareness(本地不带 user,服务端会按 JWT 注入)
+      const docA = new Y.Doc()
+      const awarenessA = new Awareness(docA)
+      awarenessA.setLocalStateField('cursorTime', 12.5)
+      const awarePayload = encodeAwarenessBinary(awarenessA, [awarenessA.clientID])
       wsA.send(encodeMessage(MSG.AWARENESS, awarePayload))
 
       // 等待 DO 处理完 A 的 awareness 帧
@@ -285,8 +296,16 @@ describe('TimelineDoc WebSocket 接入', () => {
 
       const awarenessFrames = frames.filter(f => f[0] === MSG.AWARENESS)
       expect(awarenessFrames.length).toBeGreaterThanOrEqual(1)
+      // 补发帧应已注入 A 的可信身份(userId 'ua-snap'),并保留 A 发的 cursorTime
       const decoded = decodeMessage(awarenessFrames[0])
-      expect(decoded.payload).toEqual(awarePayload)
+      const docB = new Y.Doc()
+      const awarenessB = new Awareness(docB)
+      applyAwarenessBinary(awarenessB, decoded.payload, 'remote')
+      const peer = awarenessB.getStates().get(awarenessA.clientID) as
+        | { user?: { id: string }; cursorTime?: number }
+        | undefined
+      expect(peer?.user?.id).toBe('ua-snap')
+      expect(peer?.cursorTime).toBe(12.5)
     })
   })
 

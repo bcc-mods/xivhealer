@@ -28,6 +28,7 @@ import type { InvalidCastEventSummary, PlacementEngine } from '@/utils/placement
 import { getStatusById } from '@/utils/statusRegistry'
 import { getStatusName } from '@/utils/statusIconUtils'
 import { getSyncScrollProgress, setSyncScrollProgress } from '@/utils/syncScrollProgress'
+import { generateObjectId } from '@/utils/shortId'
 import AddEventDialog from '../AddEventDialog'
 import AnnotationPopover from './AnnotationPopover'
 import TimelineContextMenu from './TimelineContextMenu'
@@ -689,7 +690,7 @@ export default function TimelineCanvas({ width, height }: TimelineCanvasProps) {
       const { addDamageEvent } = useTimelineStore.getState()
       addDamageEvent({
         ...clipboard,
-        id: `event-${Date.now()}`,
+        id: generateObjectId(),
         time,
       })
       toast.success('已粘贴伤害事件')
@@ -816,7 +817,7 @@ export default function TimelineCanvas({ width, height }: TimelineCanvasProps) {
     // 旧 checkOverlap 按 action.cooldown 硬窗口互斥，与多充能（慰藉/献奉）语义冲突。
 
     addCastEvent({
-      id: `cast-${Date.now()}`,
+      id: generateObjectId(),
       actionId: resolvedActionId,
       timestamp: time,
       playerId,
@@ -1205,7 +1206,7 @@ export default function TimelineCanvas({ width, height }: TimelineCanvasProps) {
         updateAnnotation(editingAnnotation.annotation.id, { text })
       } else {
         addAnnotation({
-          id: crypto.randomUUID(),
+          id: generateObjectId(),
           text,
           time: editingAnnotation.time,
           anchor: editingAnnotation.anchor,

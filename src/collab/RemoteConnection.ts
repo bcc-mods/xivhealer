@@ -1,11 +1,13 @@
 import * as Y from 'yjs'
-import { Awareness, encodeAwarenessUpdate, applyAwarenessUpdate } from 'y-protocols/awareness'
+import { Awareness } from 'y-protocols/awareness'
 import {
   MSG,
   encodeMessage,
   decodeMessage,
   decodeLoadReply,
   decodeEditRequest,
+  encodeAwarenessBinary,
+  applyAwarenessBinary,
 } from './syncProtocol'
 import { REMOTE_ORIGIN } from './constants'
 
@@ -46,7 +48,7 @@ export class RemoteConnection {
     if (this.status !== 'connected' || !this.ws) return
     const changed = [...added, ...updated, ...removed]
     if (changed.length === 0) return
-    this.ws.send(encodeMessage(MSG.AWARENESS, encodeAwarenessUpdate(this.awareness, changed)))
+    this.ws.send(encodeMessage(MSG.AWARENESS, encodeAwarenessBinary(this.awareness, changed)))
   }
 
   constructor(
@@ -142,7 +144,7 @@ export class RemoteConnection {
       this.ws?.send(
         encodeMessage(
           MSG.AWARENESS,
-          encodeAwarenessUpdate(this.awareness, [this.awareness.clientID])
+          encodeAwarenessBinary(this.awareness, [this.awareness.clientID])
         )
       )
       return
@@ -160,7 +162,7 @@ export class RemoteConnection {
       return
     }
     if (msg.type === MSG.AWARENESS) {
-      applyAwarenessUpdate(this.awareness, msg.payload, REMOTE_ORIGIN)
+      applyAwarenessBinary(this.awareness, msg.payload, REMOTE_ORIGIN)
       return
     }
     if (msg.type === MSG.EDIT_REQUEST) {

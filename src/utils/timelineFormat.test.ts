@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import type { Timeline } from '@/types/timeline'
 import {
   toV2,
@@ -7,7 +7,6 @@ import {
   migrateV1ToV2,
   parseFromAny,
 } from './timelineFormat'
-import { resetIdCounter } from './shortId'
 
 function makeEditorTimeline(): Timeline {
   return {
@@ -73,8 +72,6 @@ function makeEditorTimeline(): Timeline {
 }
 
 describe('toV2 / hydrateFromV2 (editor mode)', () => {
-  beforeEach(() => resetIdCounter())
-
   it('editor timeline roundtrip 保留所有用户可见信息', () => {
     const tl = makeEditorTimeline()
     const v2 = toV2(tl)
@@ -302,8 +299,6 @@ describe('toV2 / hydrateFromV2 (editor mode)', () => {
 })
 
 describe('toV2 / hydrateFromV2 (replay mode)', () => {
-  beforeEach(() => resetIdCounter())
-
   it('replay timeline 保留 pdd 与 status 数据', () => {
     const tl: Timeline = {
       ...makeEditorTimeline(),
@@ -365,8 +360,6 @@ describe('toV2 / hydrateFromV2 (replay mode)', () => {
 })
 
 describe('serializeForServer', () => {
-  beforeEach(() => resetIdCounter())
-
   it('serializeForServer 不包含运行时字段', () => {
     const tl: Timeline = {
       ...makeEditorTimeline(),
@@ -650,8 +643,6 @@ describe('migrateV1ToV2', () => {
 // ──────────────────────────────────────────────────────────────
 
 describe('parseFromAny', () => {
-  beforeEach(() => resetIdCounter())
-
   it('v === 2 直接走 V2 分支', () => {
     const tl = makeEditorTimeline()
     const v2 = toV2(tl)

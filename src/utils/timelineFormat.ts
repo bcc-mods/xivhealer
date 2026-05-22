@@ -34,7 +34,7 @@ import type {
 } from '@/types/timelineV2'
 import { getEncounterById } from '@/data/raidEncounters'
 import { generateId } from '@/utils/id'
-import { nextShortId, resetIdCounter } from '@/utils/shortId'
+import { generateObjectId } from '@/utils/shortId'
 
 // ──────────────────────────────────────────────────────────────
 // 枚举映射
@@ -239,7 +239,7 @@ function fromV2PlayerDamageDetail(
 
 function fromV2DamageEvent(e: V2DamageEvent, composition: Composition): DamageEvent {
   const out: DamageEvent = {
-    id: nextShortId(),
+    id: generateObjectId(),
     name: e.n,
     time: e.t,
     damage: e.d,
@@ -259,7 +259,7 @@ function fromV2CastEvents(ce: V2CastEvents): CastEvent[] {
   const out: CastEvent[] = new Array(len)
   for (let i = 0; i < len; i++) {
     out[i] = {
-      id: nextShortId(),
+      id: generateObjectId(),
       actionId: ce.a[i],
       timestamp: ce.t[i],
       playerId: ce.p[i],
@@ -272,7 +272,7 @@ function fromV2Annotation(a: V2Annotation): Annotation {
   const anchor: Annotation['anchor'] =
     a.k === 0 ? { type: 'damageTrack' } : { type: 'skillTrack', playerId: a.k[0], actionId: a.k[1] }
   return {
-    id: nextShortId(),
+    id: generateObjectId(),
     text: a.x,
     time: a.t,
     anchor,
@@ -311,7 +311,6 @@ function compositionFromSlots(c: string[]): Composition {
  * 反查填入。
  */
 export function hydrateFromV2(v2: V2Timeline, overrides: Partial<Timeline> = {}): Timeline {
-  resetIdCounter()
   const composition = compositionFromSlots(v2.c)
   const staticEncounter = getEncounterById(v2.e)
 

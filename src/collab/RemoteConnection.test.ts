@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import * as Y from 'yjs'
-import { Awareness, encodeAwarenessUpdate } from 'y-protocols/awareness'
+import { Awareness } from 'y-protocols/awareness'
 import { RemoteConnection } from './RemoteConnection'
 import {
   MSG,
@@ -8,6 +8,7 @@ import {
   decodeMessage,
   encodeLoadReply,
   encodeEditRequest,
+  encodeAwarenessBinary,
 } from './syncProtocol'
 
 /** 内存 fake WebSocket:记录 client 发出的帧,可手动注入 server 帧 */
@@ -373,7 +374,7 @@ describe('RemoteConnection awareness', () => {
     const peerDoc = new Y.Doc()
     const peerAwareness = new Awareness(peerDoc)
     peerAwareness.setLocalStateField('user', { id: 'u2', name: 'B', color: '#06b6d4' })
-    const peerFrame = encodeAwarenessUpdate(peerAwareness, [peerAwareness.clientID])
+    const peerFrame = encodeAwarenessBinary(peerAwareness, [peerAwareness.clientID])
     lastSocket().fireMessage(encodeMessage(MSG.AWARENESS, peerFrame))
     expect(awareness.getStates().get(peerAwareness.clientID)?.user?.name).toBe('B')
     conn.destroy()
@@ -397,7 +398,7 @@ describe('RemoteConnection awareness', () => {
     const peerAwareness = new Awareness(peerDoc)
     peerAwareness.setLocalStateField('user', { id: 'u3', name: 'C', color: '#f97316' })
     lastSocket().fireMessage(
-      encodeMessage(MSG.AWARENESS, encodeAwarenessUpdate(peerAwareness, [peerAwareness.clientID]))
+      encodeMessage(MSG.AWARENESS, encodeAwarenessBinary(peerAwareness, [peerAwareness.clientID]))
     )
     const after = lastSocket().sent.slice(before).map(decodeMessage)
     expect(after.some(m => m.type === MSG.AWARENESS)).toBe(false)

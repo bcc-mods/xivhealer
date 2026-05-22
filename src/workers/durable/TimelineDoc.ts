@@ -7,8 +7,10 @@ import {
   encodeEditRequest,
   encodeLoadReply,
   encodeMessage,
+  injectAwarenessUser,
   MSG,
 } from '@/collab/syncProtocol'
+import { displayName } from '@/collab/awarenessIdentity'
 import * as Y from 'yjs'
 import { encodeStateVectorFromUpdate, diffUpdate } from 'yjs'
 import { verifyToken } from '../jwt'
@@ -20,7 +22,9 @@ import type { Timeline } from '@/types/timeline'
 interface SocketAttachment {
   authed: boolean
   userId?: string
-  /** 该连接最近一帧 awareness payload(不透明字节,存为普通数组以可序列化) */
+  /** JWT 里的 username(原始,注入 awareness 时再过 displayName 兜底) */
+  name?: string
+  /** 该连接最近一帧 awareness payload(已注入 user 的广播字节,存为普通数组以可序列化) */
   lastAwareness?: number[]
 }
 
@@ -116,8 +120,13 @@ export class TimelineDoc extends DurableObject<Env> {
       return
     }
     if (type === MSG.AWARENESS) {
-      ws.serializeAttachment({ ...att, lastAwareness: Array.from(payload) })
-      this.broadcast(ws, encodeMessage(MSG.AWARENESS, payload)) // 仅转发
+      // 客户端上行不带 user;服务端按本连接 JWT 身份注入可信 user 后再广播(防伪 + 省上行)。
+      const injected = injectAwarenessUser(payload, {
+        id: att.userId ?? '',
+        name: displayName(att.name, att.userId ?? ''),
+      })
+      ws.serializeAttachment({ ...att, lastAwareness: Array.from(injected) })
+      this.broadcast(ws, encodeMessage(MSG.AWARENESS, injected))
       return
     }
   }
@@ -135,6 +144,7 @@ export class TimelineDoc extends DurableObject<Env> {
       return
     }
     const userId = result.payload.sub
+    const name = typeof result.payload.name === 'string' ? result.payload.name : undefined
     const row = await this.env.healerbook_timelines
       .prepare('SELECT 1 FROM timeline_editors WHERE timeline_id = ? AND user_id = ?')
       .bind(this.docId(), userId)
@@ -143,7 +153,7 @@ export class TimelineDoc extends DurableObject<Env> {
       ws.close(1008, 'not an editor')
       return
     }
-    ws.serializeAttachment({ authed: true, userId } satisfies SocketAttachment)
+    ws.serializeAttachment({ authed: true, userId, name } satisfies SocketAttachment)
     ws.send(encodeMessage(MSG.AUTH_OK, new Uint8Array()))
     // 把已在线连接的最近 awareness 补发给新连接,使其立刻看到全员
     for (const peer of this.ctx.getWebSockets()) {

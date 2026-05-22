@@ -27,6 +27,7 @@ import {
 import { createPlacementEngine } from '@/utils/placement/engine'
 import type { PlacementEngine } from '@/utils/placement/types'
 import { computeCastMarkerCells, computeLitCellsByEvent } from '@/utils/castWindow'
+import { generateObjectId } from '@/utils/shortId'
 import { mergeAndSortRows } from '@/utils/tableRows'
 import { getSyncScrollProgress, setSyncScrollProgress } from '@/utils/syncScrollProgress'
 import type { SkillTrack } from '@/utils/skillTracks'
@@ -129,7 +130,7 @@ export default function TimelineTableView() {
       // （legal = placement ∩ resourceLegalIntervals）；此处不再重复 overlap 窗口检查——
       // 旧 overlap 按 action.cooldown 硬窗口互斥，与多充能（慰藉/献奉）语义冲突。
       addCastEvent({
-        id: `cast-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        id: generateObjectId(),
         actionId: resolvedActionId,
         timestamp: event.time,
         playerId: track.playerId,

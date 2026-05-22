@@ -1,21 +1,14 @@
-import { describe, it, expect, beforeEach } from 'vitest'
-import { nextShortId, resetIdCounter } from './shortId'
+import { describe, it, expect } from 'vitest'
+import { generateObjectId } from './shortId'
 
 describe('shortId', () => {
-  beforeEach(() => {
-    resetIdCounter()
+  it('generateObjectId 返回 10 位纯字母数字 id', () => {
+    const id = generateObjectId()
+    expect(id).toMatch(/^[0-9A-Za-z]{10}$/)
   })
 
-  it('nextShortId 连续调用返回递增唯一 id', () => {
-    const ids = [nextShortId(), nextShortId(), nextShortId()]
-    expect(ids).toEqual(['e0', 'e1', 'e2'])
-    expect(new Set(ids).size).toBe(3)
-  })
-
-  it('resetIdCounter 将计数器清零', () => {
-    nextShortId()
-    nextShortId()
-    resetIdCounter()
-    expect(nextShortId()).toBe('e0')
+  it('连续调用返回唯一 id', () => {
+    const ids = Array.from({ length: 1000 }, () => generateObjectId())
+    expect(new Set(ids).size).toBe(ids.length)
   })
 })

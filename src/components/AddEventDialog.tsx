@@ -5,6 +5,7 @@
 import { useState } from 'react'
 import { DAMAGE_EVENT_NAME_MAX_LENGTH } from '@/constants/limits'
 import { useTimelineStore } from '@/store/timelineStore'
+import { generateObjectId } from '@/utils/shortId'
 import { toast } from 'sonner'
 import { Modal, ModalContent, ModalHeader, ModalTitle, ModalFooter } from '@/components/ui/modal'
 import { TimeInput } from '@/components/ui/time-input'
@@ -48,7 +49,7 @@ export default function AddEventDialog({ open, onClose, defaultTime = 0 }: AddEv
     }
 
     addDamageEvent({
-      id: `event-${Date.now()}`,
+      id: generateObjectId(),
       name: name.trim(),
       time,
       damage,

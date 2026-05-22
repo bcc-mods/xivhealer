@@ -26,7 +26,6 @@ import type { ConnectionStatus } from '@/collab/RemoteConnection'
 import type { LocalDocMeta } from '@/collab/types'
 import { useAuthStore } from '@/store/authStore'
 import type { PeerState, AwarenessState } from '@/collab/awarenessTypes'
-import { colorForUser, displayName } from '@/collab/awarenessIdentity'
 import type { Doc as YDoc } from 'yjs'
 import {
   buildYDoc,
@@ -305,14 +304,8 @@ export const useTimelineStore = create<TimelineState>()((set, get) => {
       },
       onLoadedHandler
     )
-    // 设本地 awareness user(昵称 + 颜色),并订阅 peers 变化
-    const auth = useAuthStore.getState()
-    const uid = auth.userId ?? ''
-    engine.awareness.setLocalStateField('user', {
-      id: uid,
-      name: displayName(auth.username, uid),
-      color: colorForUser(uid),
-    })
+    // 本地 awareness 不设 user —— 由服务端按 JWT 身份在广播帧注入(省上行 + 防伪)。
+    // 仅初始化动态字段,并订阅 peers 变化。
     engine.awareness.setLocalStateField('selection', { eventId: null, castEventId: null })
     engine.awareness.setLocalStateField('cursorTime', null)
     engine.awareness.setLocalStateField('dragging', null)

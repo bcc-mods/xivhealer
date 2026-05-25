@@ -686,7 +686,7 @@ export default function PropertyPanel() {
                 >
                   <p className="text-sm text-muted-foreground leading-relaxed">
                     该计算结果为基于部分统计数据的<b>估算效果</b>
-                    ，除部分技能（如秘策）外并未计算暴击、增疗等因素，与游戏中的实际伤害可能会有较大差异，仅供参考。
+                    ，与游戏中的实际伤害可能会有差异，仅供参考。
                   </p>
                 </PopoverContent>
               </Popover>

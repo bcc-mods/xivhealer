@@ -61,7 +61,24 @@
         }
       }
     </style>
-    <script defer src="https://cloud.umami.is/script.js" data-website-id="8f1c1c3a-39b6-469e-ace0-5043cac21b0c" data-domains="xivhealer.com"></script>
+    <script>
+      // 埋点注入：localhost 不加载（零网络请求）；判定放在 head 同步执行，
+      // 使动态插入的脚本下载时机贴近原静态 defer 标签，避免影响 Cloudflare RUM 早期指标
+      ;(function () {
+        var h = location.hostname
+        if (h === 'localhost' || h === '127.0.0.1' || h.endsWith('.local')) return
+        var umami = document.createElement('script')
+        umami.defer = true
+        umami.src = 'https://cloud.umami.is/script.js'
+        umami.setAttribute('data-website-id', '8f1c1c3a-39b6-469e-ace0-5043cac21b0c')
+        document.head.appendChild(umami)
+        var cf = document.createElement('script')
+        cf.defer = true
+        cf.src = 'https://static.cloudflareinsights.com/beacon.min.js'
+        cf.setAttribute('data-cf-beacon', '{"token": "7d06102fb22e41b195ebfcf1e023480e"}')
+        document.head.appendChild(cf)
+      })()
+    </script>
   </head>
   <body>
     <div id="root">
@@ -81,6 +98,5 @@
       </div>
     </div>
     <script type="module" src="/src/main.tsx"></script>
-    <script defer src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "7d06102fb22e41b195ebfcf1e023480e"}'></script>
   </body>
 </html>

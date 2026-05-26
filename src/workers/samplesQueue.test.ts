@@ -4,26 +4,20 @@ import {
   pickNextSample,
   validateEnqueueSamplesRequest,
   ENQUEUE_SAMPLES_MAX_REPORTS,
+  SAMPLE_ENCOUNTER_ID,
   type SampleQueueRow,
 } from './samplesQueue'
 
 /**
  * 内存 D1 mock：模拟本模块用到的 SQL：
  *   INSERT OR IGNORE INTO samples_queue ...                                  (enqueue)
- *   SELECT DISTINCT encounter_id FROM samples_queue WHERE sampled = 0 ...   (pick step 1)
- *   SELECT id FROM samples_queue WHERE sampled = 0 AND encounter_id = ? ORDER BY id DESC ... (pick step 2)
- *   UPDATE samples_queue SET sampled = 1, ... WHERE id = ? RETURNING ...    (pick step 3)
+ *   SELECT id FROM samples_queue WHERE sampled = 0 AND encounter_id = ? ORDER BY id DESC ... (pick step 1)
+ *   UPDATE samples_queue SET sampled = 1, ... WHERE id = ? RETURNING ...    (pick step 2)
  */
 function makeMockD1(initialRows: SampleQueueRow[] = []): D1Database {
   let nextId = initialRows.reduce((m, r) => Math.max(m, r.id), 0) + 1
   // 深拷贝避免后续 markSampled 改对象时污染调用方传入的 seed
   const rows: SampleQueueRow[] = initialRows.map(r => ({ ...r }))
-
-  function pickRandomEncounterWithUnsampled(): number | null {
-    const encounters = [...new Set(rows.filter(r => r.sampled === 0).map(r => r.encounter_id))]
-    if (encounters.length === 0) return null
-    return encounters[Math.floor(Math.random() * encounters.length)]
-  }
 
   function pickLatestUnsampledId(encounterId: number): number | null {
     const candidates = rows.filter(r => r.encounter_id === encounterId && r.sampled === 0)
@@ -42,14 +36,6 @@ function makeMockD1(initialRows: SampleQueueRow[] = []): D1Database {
 
   return {
     prepare: (sql: string) => ({
-      first: async <T>(): Promise<T | null> => {
-        if (sql.includes('SELECT DISTINCT encounter_id') && sql.includes('sampled = 0')) {
-          const encounterId = pickRandomEncounterWithUnsampled()
-          if (encounterId === null) return null
-          return { encounter_id: encounterId } as unknown as T
-        }
-        throw new Error(`Unhandled prepare().first() SQL in mock: ${sql}`)
-      },
       bind: (...args: unknown[]) => ({
         run: async () => {
           if (sql.startsWith('INSERT OR IGNORE INTO samples_queue')) {
@@ -133,73 +119,26 @@ describe('enqueueRankings', () => {
   })
 })
 
+// 只测与选行策略无关的不变量：有可采行 → 返回并标记 sampled=1；没有 → null。
+// "具体挑哪一行" 即策略本身，会随版本频繁改动，不在此固化。
 describe('pickNextSample', () => {
-  it('无未采样行返回 null', async () => {
+  it('无可采行返回 null', async () => {
     const db = makeMockD1()
     const row = await pickNextSample(db)
     expect(row).toBeNull()
   })
 
-  it('返回未采样行并标记 sampled=1', async () => {
+  it('有可采行时返回该行并标记 sampled=1，采完返回 null', async () => {
     const db = makeMockD1()
-    await enqueueRankings(db, 1001, [{ reportCode: 'AAA', fightID: 1, durationMs: 100_000 }])
-    const row = await pickNextSample(db)
-    expect(row).not.toBeNull()
-    expect(row!.report_code).toBe('AAA')
-    expect(row!.sampled).toBe(1)
-    const second = await pickNextSample(db)
-    expect(second).toBeNull()
-  })
-
-  it('多个 encounter 都有未采样行时，挑中的一定来自这些 encounter', async () => {
-    const db = makeMockD1()
-    await enqueueRankings(db, 1001, [{ reportCode: 'A', fightID: 1, durationMs: 100_000 }])
-    await enqueueRankings(db, 1002, [{ reportCode: 'B', fightID: 1, durationMs: 100_000 }])
-    const row = await pickNextSample(db)
-    expect(row).not.toBeNull()
-    expect([1001, 1002]).toContain(row!.encounter_id)
-  })
-
-  it('encounter 内有多条未采样行时，按 id DESC 优先挑最新入队的', async () => {
-    const db = makeMockD1()
-    await enqueueRankings(db, 1001, [
-      { reportCode: 'OLD', fightID: 1, durationMs: 100_000 },
-      { reportCode: 'MID', fightID: 2, durationMs: 100_000 },
-      { reportCode: 'NEW', fightID: 3, durationMs: 100_000 },
+    await enqueueRankings(db, SAMPLE_ENCOUNTER_ID, [
+      { reportCode: 'AAA', fightID: 1, durationMs: 100_000 },
     ])
     const row = await pickNextSample(db)
-    expect(row!.report_code).toBe('NEW')
-  })
-
-  it('已全部采样过的 encounter 不会被选中', async () => {
-    const seed: SampleQueueRow[] = [
-      {
-        id: 1,
-        encounter_id: 1001,
-        report_code: 'A1',
-        fight_id: 1,
-        duration_ms: 100_000,
-        sampled: 1,
-        sampled_at: 1000,
-        created_at: 1000,
-        updated_at: 1000,
-      },
-      {
-        id: 2,
-        encounter_id: 1002,
-        report_code: 'B1',
-        fight_id: 1,
-        duration_ms: 100_000,
-        sampled: 0,
-        sampled_at: null,
-        created_at: 2000,
-        updated_at: 2000,
-      },
-    ]
-    for (let i = 0; i < 20; i++) {
-      const row = await pickNextSample(makeMockD1(seed))
-      expect(row!.encounter_id).toBe(1002)
-    }
+    expect(row).not.toBeNull()
+    expect(row!.sampled).toBe(1)
+    expect(row!.sampled_at).not.toBeNull()
+    const second = await pickNextSample(db)
+    expect(second).toBeNull()
   })
 })
 

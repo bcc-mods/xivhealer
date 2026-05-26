@@ -20,14 +20,18 @@ export function useSmoothedPeers(zoomLevel: number): PeerState[] {
   const peersRef = useRef(peers)
   const zoomRef = useRef(zoomLevel)
 
-  // 在 layout effect 中同步 refs，避免在渲染阶段直接写 ref.current（react-hooks/refs）
+  // 同步最新 peers / zoomLevel 供 rAF 循环读取；用 layout effect 而非渲染期写 ref，
+  // 以满足 lint 规则 react-hooks/refs。
   useLayoutEffect(() => {
     peersRef.current = peers
     zoomRef.current = zoomLevel
-  })
+  }, [peers, zoomLevel])
 
   useEffect(() => {
+    let cancelled = false
+
     const tick = (ts: number) => {
+      if (cancelled) return
       const last = lastTsRef.current
       const dtMs = last == null ? 16 : Math.min(ts - last, 100) // 钳制长帧（切后台）
       lastTsRef.current = ts
@@ -55,6 +59,7 @@ export function useSmoothedPeers(zoomLevel: number): PeerState[] {
     }
 
     return () => {
+      cancelled = true
       if (rafRef.current != null) {
         cancelAnimationFrame(rafRef.current)
         rafRef.current = null

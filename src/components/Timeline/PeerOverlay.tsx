@@ -11,7 +11,7 @@
 
 import { Fragment, useMemo } from 'react'
 import { Label, Line, Rect, Tag, Text } from 'react-konva'
-import type { PeerState } from '@/collab/awarenessTypes'
+import { useSmoothedPeers } from './useSmoothedPeers'
 import type { Annotation, DamageEvent, CastEvent } from '@/types/timeline'
 import type { SkillTrack } from '@/utils/skillTracks'
 import type { MitigationAction } from '@/types/mitigation'
@@ -58,8 +58,6 @@ interface PeerOverlayFixedProps {
   damageTrackHeight: number
   /** 伤害轨道 annotations，用于 annotation ghost 查找 */
   annotations: Annotation[]
-  /** 平滑后的 peers（由 useSmoothedPeers 提供，cursorTime / dragging.time 已补间） */
-  peers: PeerState[]
 }
 
 export function PeerOverlayFixed({
@@ -71,8 +69,8 @@ export function PeerOverlayFixed({
   fixedAreaHeight,
   damageTrackHeight,
   annotations,
-  peers,
 }: PeerOverlayFixedProps) {
+  const peers = useSmoothedPeers(zoomLevel)
   // 构建 eventId → DamageEvent 快速查找
   const damageEventById = useMemo(() => {
     const map = new Map<string, DamageEvent>()
@@ -258,8 +256,6 @@ interface PeerOverlayMainProps {
   skillTracksHeight: number
   /** 技能轨道 annotations，用于 annotation ghost 查找 */
   annotations: Annotation[]
-  /** 平滑后的 peers（由 useSmoothedPeers 提供，cursorTime / dragging.time 已补间） */
-  peers: PeerState[]
 }
 
 export function PeerOverlayMain({
@@ -270,8 +266,8 @@ export function PeerOverlayMain({
   trackHeight,
   skillTracksHeight,
   annotations,
-  peers,
 }: PeerOverlayMainProps) {
+  const peers = useSmoothedPeers(zoomLevel)
   // castEventId → CastEvent 快速查找
   const castEventById = useMemo(() => {
     const map = new Map<string, CastEvent>()

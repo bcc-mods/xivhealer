@@ -39,7 +39,6 @@ new_sqlite_classes = ["TimelineDoc"]
 [env.development.vars]
 ENVIRONMENT = "development"
 FFLOGS_CLIENT_ID = "a15cca7c-686d-4c4b-9d90-c1ee194b7638"
-FFLOGS_OAUTH_REDIRECT_URI = "http://localhost:5173/callback"
 
 [[env.development.kv_namespaces]]
 binding = "healerbook"
@@ -66,7 +65,6 @@ ENVIRONMENT = "production"
 RATE_LIMIT_RPM = "30"
 CACHE_TTL = "3600"
 FFLOGS_CLIENT_ID = "a1263e4f-6950-4100-9a79-f7ebfb94363c"
-FFLOGS_OAUTH_REDIRECT_URI = "https://xivhealer.com/callback"
 
 [[env.production.kv_namespaces]]
 binding = "healerbook"

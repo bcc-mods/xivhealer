@@ -1476,14 +1476,16 @@ describe('HP 池演化 - partial 段累积', () => {
       baseReferenceMaxHPForAoe: 100000,
     })
     const r = (id: string) => out.damageResults.get(id)!.hpSimulation!
+    // 每个事件前的 advance 窗口内每 3s tick 常驻回 1% 上限(=1000)；dealt 金额不变，
+    // 只是 hpBefore 因 tick 回血上升。A 之前 hp 仍满血（tick 全溢出）。
     expect(r('A').hpAfter).toBe(80000)
-    expect(r('B').hpAfter).toBe(65000)
-    expect(r('D').hpAfter).toBe(58000)
-    expect(r('E').hpAfter).toBe(58000) // 增量 0
-    expect(r('G').hpAfter).toBe(50000) // pfaoe = partial_aoe + 段结束：dealt = max(0, 30k - 22k) = 8k
-    expect(r('I').hpAfter).toBe(38000) // I 开新段 segMax=12k, dealt=12k
-    expect(r('J').hpAfter).toBe(36000) // J segMax=14k, dealt=2k
-    expect(r('L').hpAfter).toBe(30000) // L segMax=20k, dealt=6k
+    expect(r('B').hpAfter).toBe(67000) // (10,15] tick 12/15 +2000
+    expect(r('D').hpAfter).toBe(62000) // (15,22] tick 18/21 +2000，dealt 7k
+    expect(r('E').hpAfter).toBe(63000) // (22,25] tick 24 +1000，dealt 0
+    expect(r('G').hpAfter).toBe(57000) // (25,30] tick 27/30 +2000，dealt 8k
+    expect(r('I').hpAfter).toBe(48000) // (30,40] tick 33/36/39 +3000，dealt 12k
+    expect(r('J').hpAfter).toBe(47000) // (40,43] tick 42 +1000，dealt 2k
+    expect(r('L').hpAfter).toBe(43000) // (43,50] tick 45/48 +2000，dealt 6k
   })
 
   it('aoe 中段插入打断 partial 段', () => {
@@ -1502,11 +1504,12 @@ describe('HP 池演化 - partial 段累积', () => {
       baseReferenceMaxHPForAoe: 100000,
     })
     const r = (id: string) => out.damageResults.get(id)!.hpSimulation!
-    expect(r('X1').hpAfter).toBe(80000)
-    expect(r('X2').hpAfter).toBe(75000)
-    expect(r('X3').hpAfter).toBe(45000)
-    expect(r('X4').hpAfter).toBe(30000)
-    expect(r('X5').hpAfter).toBe(17000)
+    // 含常驻 tick 回血(+1000/tick)；dealt 不变
+    expect(r('X1').hpAfter).toBe(80000) // (0,5] tick 3 满血溢出
+    expect(r('X2').hpAfter).toBe(77000) // (5,10] tick 6/9 +2000
+    expect(r('X3').hpAfter).toBe(49000) // (10,15] tick 12/15 +2000，aoe dealt 30k
+    expect(r('X4').hpAfter).toBe(35000) // (15,20] tick 18 +1000
+    expect(r('X5').hpAfter).toBe(24000) // (20,25] tick 21/24 +2000
   })
 
   it('tankbuster / auto 段穿透；tankbuster 接 partial_aoe 段不被打断', () => {
@@ -1524,7 +1527,8 @@ describe('HP 池演化 - partial 段累积', () => {
     })
     expect(out.damageResults.get('p1')!.hpSimulation!.hpAfter).toBe(80000)
     expect(out.damageResults.get('t1')!.hpSimulation).toBeUndefined()
-    expect(out.damageResults.get('p2')!.hpSimulation!.hpAfter).toBe(75000)
+    // p2 之前经过 tick 6/9(→t1)/12/15 共 +4000；partial 段不被 tankbuster 打断，dealt 5k
+    expect(out.damageResults.get('p2')!.hpSimulation!.hpAfter).toBe(79000)
   })
 
   it('overkill：aoe finalDamage > hp.current 时 hp clamp 到 0', () => {
@@ -1537,8 +1541,9 @@ describe('HP 池演化 - partial 段累积', () => {
       baseReferenceMaxHPForAoe: 100000,
     })
     const r = out.damageResults.get('B')!.hpSimulation!
+    // B 前 tick 6/9 回 +2000 → hp 52000，B 扣 80k 仍 clamp 0，overkill = 80k-52k
     expect(r.hpAfter).toBe(0)
-    expect(r.overkill).toBe(30000)
+    expect(r.overkill).toBe(28000)
   })
 
   it('段未收尾时 EOF 不强制结算', () => {
@@ -1553,7 +1558,8 @@ describe('HP 池演化 - partial 段累积', () => {
       initialState: baseInitialState,
       baseReferenceMaxHPForAoe: 100000,
     })
-    expect(out.damageResults.get('p2')!.hpSimulation!.hpAfter).toBe(70000)
+    // p2 前 tick 6/9 回 +2000 → hp 82000，partial dealt 10k → 72000
+    expect(out.damageResults.get('p2')!.hpSimulation!.hpAfter).toBe(72000)
   })
 })
 
@@ -1662,9 +1668,10 @@ describe('HP 池 - maxHP buff 同步伸缩', () => {
       expect(out.damageResults.get('A')!.hpSimulation!.hpAfter).toBe(90000)
       const rB = out.damageResults.get('B')!.hpSimulation!
       expect(rB.hpMax).toBe(100000)
-      // hp 110k → A 扣 20k 余 90k → B 时 maxHP buff 仍在缩到 (90k/110k)*100k=81818 后扣 20k
-      // 旧逻辑: 90000/110000 * 100000 = 81818.18 浮点；新逻辑 recomputeHpMax round → 81818
-      expect(rB.hpAfter).toBe(61818)
+      // 含常驻 tick 回血：A 前满血(tick 全溢出)，A 后 90k；(10,20] 内 tick 12/15 各 +1100
+      // (max 110k) → 92200，t=15 buff 过期按比例回缩 92200*(100k/110k)≈83818，tick 18 +1000
+      // → 84818，B 扣 20k → 64818
+      expect(rB.hpAfter).toBe(64818)
     } finally {
       spy.mockRestore()
     }
@@ -1738,8 +1745,10 @@ describe('HP 池 - calculate 内钩子能 push HealSnapshot', () => {
         baseReferenceMaxHPForAoe: 100000,
       })
 
-      expect(out.healSnapshots).toHaveLength(1)
-      expect(out.healSnapshots[0]).toMatchObject({
+      // 过滤掉常驻自然回复(actionId 1302)的 tick snapshot，只看反应式钩子那一条
+      const reactiveHeals = out.healSnapshots.filter(s => s.actionId !== 1302)
+      expect(reactiveHeals).toHaveLength(1)
+      expect(reactiveHeals[0]).toMatchObject({
         sourcePlayerId: 1,
         time: 10,
         baseAmount: 1500,
@@ -1803,10 +1812,10 @@ describe('HP 池 - calculate 内钩子改 hp 真正生效', () => {
         initialState,
         baseReferenceMaxHPForAoe: 100000,
       })
-      // 修复前：B.hpAfter = 60000（主循环还原 hp，钩子的 +1k 丢失）
-      // 修复后：B.hpAfter = 61000（钩子的 +1k 生效）
+      // A 前满血(tick 溢出) → 扣 20k = 80000；phase5 钩子 +1k → 81000。
+      // (10,20] tick 12/15/18 +3000 → 84000，B 扣 20k → 64000（含钩子 +1k 累积生效）
       expect(out.damageResults.get('A')!.hpSimulation!.hpAfter).toBe(80000)
-      expect(out.damageResults.get('B')!.hpSimulation!.hpAfter).toBe(61000)
+      expect(out.damageResults.get('B')!.hpSimulation!.hpAfter).toBe(64000)
     } finally {
       spy.mockRestore()
     }
@@ -2048,8 +2057,12 @@ describe('HP 池 · hpTimeline', () => {
       initialState: baseInitialState,
       baseReferenceMaxHPForAoe: 100000,
     })
+    // 常驻自然回复在 (0,10] 的 tick 3/6/9 各 push 一条 tick 点（满血 → hp 不变）
     expect(out.hpTimeline).toEqual([
       { time: 0, hp: 100000, hpMax: 100000, kind: 'init' },
+      { time: 3, hp: 100000, hpMax: 100000, kind: 'tick' },
+      { time: 6, hp: 100000, hpMax: 100000, kind: 'tick' },
+      { time: 9, hp: 100000, hpMax: 100000, kind: 'tick' },
       { time: 10, hp: 70000, hpMax: 100000, kind: 'damage', refEventId: 'A' },
     ])
   })
@@ -2067,10 +2080,11 @@ describe('HP 池 · hpTimeline', () => {
       baseReferenceMaxHPForAoe: 100000,
     })
     const dmgPoints = out.hpTimeline.filter(p => p.kind === 'damage')
+    // 含常驻 tick 回血(+1000/tick)：A 满血溢出；B 前 +2000；C 前 +2000
     expect(dmgPoints).toEqual([
       { time: 5, hp: 80000, hpMax: 100000, kind: 'damage', refEventId: 'A' },
-      { time: 10, hp: 75000, hpMax: 100000, kind: 'damage', refEventId: 'B' },
-      { time: 15, hp: 70000, hpMax: 100000, kind: 'damage', refEventId: 'C' },
+      { time: 10, hp: 77000, hpMax: 100000, kind: 'damage', refEventId: 'B' },
+      { time: 15, hp: 74000, hpMax: 100000, kind: 'damage', refEventId: 'C' },
     ])
   })
 
@@ -2143,8 +2157,12 @@ describe('HP 池 · hpTimeline', () => {
         hp: p.hp,
         refEventId: p.refEventId,
       }))
+      // 常驻 tick 回血在 (0,10] 的 3/6/9 各 push 一条 tick 点（满血 → hp 不变）
       expect(events).toEqual([
         { time: 0, kind: 'init', hp: 100000, refEventId: undefined },
+        { time: 3, kind: 'tick', hp: 100000, refEventId: undefined },
+        { time: 6, kind: 'tick', hp: 100000, refEventId: undefined },
+        { time: 9, kind: 'tick', hp: 100000, refEventId: undefined },
         { time: 10, kind: 'damage', hp: 70000, refEventId: 'A' },
         { time: 10, kind: 'heal', hp: 75000, refEventId: 'cast-heal-1' },
       ])
@@ -2217,11 +2235,16 @@ describe('HP 池 · hpTimeline', () => {
         baseReferenceMaxHPForAoe: 100000,
       })
 
-      const tickPoints = out.hpTimeline.filter(p => p.kind === 'tick')
+      // 每个 tick 时刻有两条 tick 点：mock HoT(refEventId 'hot-cast') 与常驻自然回复
+      // (refEventId undefined)。这里只看 HoT 那条，验证 isHotTick=true → kind=tick。
+      const tickPoints = out.hpTimeline.filter(
+        p => p.kind === 'tick' && p.refEventId === 'hot-cast'
+      )
       // tick 在 (prev, cur] 区间触发：第一段 (0,1] 无；第二段 (1,12] 触发 3,6,9,12
       expect(tickPoints.map(p => p.time)).toEqual([3, 6, 9, 12])
-      // 第一个 tick：50000 + 1000 = 51000，依次类推
-      expect(tickPoints.map(p => p.hp)).toEqual([51000, 52000, 53000, 54000])
+      // 每个 tick 内 HoT 先 +1000 再常驻 +1000；HoT 点取 HoT 之后的 hp：
+      // 50000 →(+1000 HoT)51000 →(+1000 常驻)52000 →(HoT)53000 →54000 →55000 →56000 →57000
+      expect(tickPoints.map(p => p.hp)).toEqual([51000, 53000, 55000, 57000])
       expect(tickPoints[0].refEventId).toBe('hot-cast')
     } finally {
       spy.mockRestore()

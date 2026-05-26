@@ -637,6 +637,30 @@ export class MitigationCalculator {
             next = recomputeAndTrack(next, t)
           }
         }
+
+        // 常驻自然回复：每个 3s tick 固定回 1% 上限（写死），clamp 到 hp.max。与所有 status
+        // 无关，只要 hp 池存在就触发。记一条 isHotTick 的 HealSnapshot（actionId 1302）让治疗
+        // 曲线/统计纳入它；recordHeal 内部据 applied 更新 lastKnownHp 并 push tick 点，故与下面
+        // hp.current 的更新保持同步（同 regenStatusExecutor 的"先 record 再写 hp"口径）。
+        if (next.hp) {
+          const regen = Math.round(next.hp.max * 0.01)
+          if (regen > 0) {
+            const before = next.hp.current
+            const cur = Math.min(before + regen, next.hp.max)
+            recordHeal?.({
+              castEventId: '',
+              actionId: 1302,
+              sourcePlayerId: 0,
+              time: t,
+              baseAmount: regen,
+              finalHeal: regen,
+              applied: cur - before,
+              overheal: regen - (cur - before),
+              isHotTick: true,
+            })
+            next = { ...next, hp: { ...next.hp, current: cur } }
+          }
+        }
       }
 
       const fireExpire = (status: MitigationStatus) => {

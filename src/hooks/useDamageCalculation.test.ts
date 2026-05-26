@@ -410,16 +410,17 @@ describe('HP 模拟端到端（partial 段 + cast 治疗 + HoT）', () => {
       const { result } = renderHook(() => useDamageCalculation(timeline))
       await flushWorker()
 
-      // p1 (t=10): hp 100k（cast 在 t=5 时刻 hp 满血、+10k overheal）→ partial 20k → 80k
+      // 含常驻自然回复(+1000/tick)；满血段 tick 全溢出。
+      // p1 (t=10): hp 100k（cast 在 t=5 满血、+10k overheal；tick 3/6/9 溢出）→ partial 20k → 80k
       expect(result.current.results.get('p1')!.hpSimulation!.hpAfter).toBe(80000)
-      // p2 (t=15): segMax 20k → 25k，增量 5k → 75k
-      expect(result.current.results.get('p2')!.hpSimulation!.hpAfter).toBe(75000)
-      // HoT cast 在 t=18，tick 在 t=21、t=24 触发（每次 +3k）→ p3 前 hp = 75 + 6 = 81k
-      // p3 (t=25): segMax 25k → 30k，增量 5k → 76k
-      expect(result.current.results.get('p3')!.hpSimulation!.hpAfter).toBe(76000)
+      // p2 (t=15): (10,15] tick 12/15 +2000 → 82k，segMax 20k→25k 增量 5k → 77k
+      expect(result.current.results.get('p2')!.hpSimulation!.hpAfter).toBe(77000)
+      // tick 18 +1000 → 78k；HoT cast t=18 起，(18,25] tick 21/24 各 HoT +3k 与常驻 +1k
+      // → 78k+3k+1k+3k+1k=86k；p3 (t=25): segMax 25k→30k 增量 5k → 81k
+      expect(result.current.results.get('p3')!.hpSimulation!.hpAfter).toBe(81000)
 
-      // healSnapshots：1 次 cast 一次性 + 2 次 HoT tick = 3
-      const snaps = result.current.healSnapshots
+      // 过滤掉常驻自然回复(actionId 1302)：剩 1 次 cast 一次性 + 2 次 HoT tick = 3
+      const snaps = result.current.healSnapshots.filter(s => s.actionId !== 1302)
       expect(snaps).toHaveLength(3)
       expect(snaps[0]).toMatchObject({
         castEventId: 'cast-heal',

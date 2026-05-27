@@ -1992,4 +1992,21 @@ describe('parseStatData', () => {
     ] as unknown as Parameters<typeof parseStatData>[0]
     expect(parseStatData(events, playerMap, composition)).toBeUndefined()
   })
+
+  it('暴击治疗走 p90，与普通治疗 p50 区分', () => {
+    const playerMap = new Map([[3, { id: 3, name: 'S', type: 'Scholar' }]])
+    const composition: Composition = { players: [{ id: 3, job: 'SCH' }] }
+    // SCH 意气轩昂之策 37013 同时声明 heal 与 critHeal
+    const events = [10000, 20000, 30000, 40000, 50000].map(amount => ({
+      type: 'heal',
+      abilityGameID: 37013,
+      amount,
+    })) as unknown as Parameters<typeof parseStatData>[0]
+
+    const result = parseStatData(events, playerMap, composition)
+
+    expect(result).toBeDefined()
+    expect(result!.healByAbility[37013]).toBe(30000) // p50
+    expect(result!.critHealByAbility[37013]).toBe(46000) // p90
+  })
 })

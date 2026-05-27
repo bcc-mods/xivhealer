@@ -26,7 +26,11 @@ import {
 } from '@/contexts/DamageCalculationContext'
 import { createPlacementEngine } from '@/utils/placement/engine'
 import type { PlacementEngine } from '@/utils/placement/types'
-import { computeCastMarkerCells, computeLitCellsByEvent } from '@/utils/castWindow'
+import {
+  computeCastMarkerCells,
+  computeCdCellsByEvent,
+  computeLitCellsByEvent,
+} from '@/utils/castWindow'
 import { generateObjectId } from '@/utils/shortId'
 import { mergeAndSortRows } from '@/utils/tableRows'
 import { getSyncScrollProgress, setSyncScrollProgress } from '@/utils/syncScrollProgress'
@@ -86,6 +90,16 @@ export default function TimelineTableView() {
     if (!timeline) return new Map<string, Map<string, number>>()
     return computeCastMarkerCells(filteredDamageEvents, filteredCastEvents, actionsById)
   }, [timeline, filteredDamageEvents, filteredCastEvents, actionsById])
+
+  const cdCellsByEvent = useMemo(() => {
+    if (!timeline || !engine) return new Map<string, Set<string>>()
+    return computeCdCellsByEvent(
+      filteredDamageEvents,
+      filteredCastEvents,
+      actionsById,
+      engine.cdBarEndFor
+    )
+  }, [timeline, engine, filteredDamageEvents, filteredCastEvents, actionsById])
 
   // 单元格点击：在该行事件时刻放置/移除对应技能
   // - 带图标的单元格（marker，即 cast 起点）→ 移除对应 cast
@@ -329,6 +343,7 @@ export default function TimelineTableView() {
                   timeline={timeline}
                   skillTracks={skillTracks}
                   litCells={litCellsByEvent.get(row.id) ?? new Set()}
+                  cdCells={cdCellsByEvent.get(row.id) ?? new Set()}
                   markerCells={markerCellsByEvent.get(row.id) ?? new Map<string, number>()}
                   actionsById={actionsById}
                   calculationResult={calculationResults.get(row.id)}

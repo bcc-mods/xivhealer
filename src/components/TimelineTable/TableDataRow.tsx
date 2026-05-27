@@ -31,6 +31,8 @@ interface TableDataRowProps {
   timeline: Timeline
   skillTracks: SkillTrack[]
   litCells: Set<string>
+  /** 处于蓝色 CD 区间的单元格（与 litCells 互斥优先级：绿优先于蓝） */
+  cdCells: Set<string>
   /**
    * 标记为 cast 起点的单元格——即该伤害事件是 cast 之后的第一个。
    * value 是实际住在该格的 cast 的 actionId（与 key 用的 trackGroup 不同，
@@ -91,6 +93,7 @@ export default function TableDataRow({
   timeline,
   skillTracks,
   litCells,
+  cdCells,
   markerCells,
   actionsById,
   calculationResult,
@@ -216,6 +219,9 @@ export default function TableDataRow({
             }}
           >
             {isLit && <div className="absolute inset-0 bg-emerald-500/30" />}
+            {!isLit && cdCells.has(key) && (
+              <div className="pointer-events-none absolute inset-0 bg-blue-500/15" />
+            )}
             {isMarker && (
               <img
                 src={getIconUrl(markerAction?.icon ?? track.actionIcon)}

@@ -3,6 +3,7 @@
  */
 
 import type { FFLogsReport, FFLogsV1Report, FFLogsAbility, FFLogsEvent } from '@/types/fflogs'
+import type { TimelineStatData } from '@/types/statData'
 import type {
   Composition,
   DamageEvent,
@@ -690,4 +691,83 @@ export function extractMaxHPData(
     maxHPByJob[job]!.push(maxHP)
   }
   return maxHPByJob as Record<Job, number[]>
+}
+
+/**
+ * 从单场战斗事件提取 statData（供未收录副本导入时填充）。
+ *
+ * 仅保留当前阵容 statDataEntries 声明的 key；普通值取 p50、暴击值取 p90，
+ * 与 top100Sync 的 statistics 口径一致。四类数值与 HP 全空时返回 undefined。
+ */
+export function parseStatData(
+  events: FFLogsEvent[],
+  playerMap: Map<number, { id: number; name: string; type: string }>,
+  composition: Composition
+): TimelineStatData | undefined {
+  // 1. 阵容内 action 的 statDataEntries → 按 type 分桶的合法 key 集合
+  const jobs = new Set(composition.players.map(p => p.job))
+  const entries = MITIGATION_DATA.actions
+    .filter(a => a.statDataEntries && a.jobs.some(j => jobs.has(j)))
+    .flatMap(a => a.statDataEntries!)
+  const shieldKeys = new Set(entries.filter(e => e.type === 'shield').map(e => e.key))
+  const critShieldKeys = new Set(entries.filter(e => e.type === 'critShield').map(e => e.key))
+  const healKeys = new Set(entries.filter(e => e.type === 'heal').map(e => e.key))
+  const critHealKeys = new Set(entries.filter(e => e.type === 'critHeal').map(e => e.key))
+
+  // 2. 原始样本
+  const rawShield = extractShieldData(events)
+  const rawHeal = extractHealData(events)
+  const rawMaxHP = extractMaxHPData(events, playerMap)
+
+  // 3. 逐 key p50/p90，仅保留合法 key
+  const shieldByAbility: Record<number, number> = {}
+  const critShieldByAbility: Record<number, number> = {}
+  const healByAbility: Record<number, number> = {}
+  const critHealByAbility: Record<number, number> = {}
+
+  for (const [k, samples] of Object.entries(rawShield)) {
+    if (!samples.length) continue
+    const key = Number(k)
+    if (shieldKeys.has(key)) shieldByAbility[key] = calculatePercentile(samples, 50)
+    if (critShieldKeys.has(key)) critShieldByAbility[key] = calculatePercentile(samples, 90)
+  }
+  for (const [k, samples] of Object.entries(rawHeal)) {
+    if (!samples.length) continue
+    const key = Number(k)
+    if (healKeys.has(key)) healByAbility[key] = calculatePercentile(samples, 50)
+    if (critHealKeys.has(key)) critHealByAbility[key] = calculatePercentile(samples, 90)
+  }
+
+  // 4. 血量：每职业 p50 → 非坦/坦克分别取 min
+  const tankJobs = new Set<string>(getTankJobs())
+  const nonTankHPs: number[] = []
+  const tankHPs: number[] = []
+  for (const [job, samples] of Object.entries(rawMaxHP)) {
+    if (!samples.length) continue
+    const hp = calculatePercentile(samples, 50)
+    if (hp <= 0) continue
+    if (tankJobs.has(job)) tankHPs.push(hp)
+    else nonTankHPs.push(hp)
+  }
+  const referenceMaxHP = nonTankHPs.length ? Math.min(...nonTankHPs) : undefined
+  const tankReferenceMaxHP = tankHPs.length ? Math.min(...tankHPs) : undefined
+
+  // 5. 全空 → undefined（调用方不赋值，sd 不落盘，行为同现状）
+  const hasAny =
+    Object.keys(shieldByAbility).length > 0 ||
+    Object.keys(critShieldByAbility).length > 0 ||
+    Object.keys(healByAbility).length > 0 ||
+    Object.keys(critHealByAbility).length > 0 ||
+    referenceMaxHP !== undefined ||
+    tankReferenceMaxHP !== undefined
+  if (!hasAny) return undefined
+
+  return {
+    ...(referenceMaxHP !== undefined ? { referenceMaxHP } : {}),
+    ...(tankReferenceMaxHP !== undefined ? { tankReferenceMaxHP } : {}),
+    shieldByAbility,
+    critShieldByAbility,
+    healByAbility,
+    critHealByAbility,
+  }
 }

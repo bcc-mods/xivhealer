@@ -11,8 +11,10 @@ import {
   extractShieldData,
   extractHealData,
   extractMaxHPData,
+  parseStatData,
 } from './fflogsImporter'
 import type { FFLogsAbility } from '@/types/fflogs'
+import type { Composition } from '@/types/timeline'
 
 type V2Actor = { id: number; name: string; type: string }
 
@@ -1932,5 +1934,62 @@ describe('extractMaxHPData', () => {
 
     expect(result.WAR).toEqual([200000])
     expect(result.WHM).toEqual([120000])
+  })
+})
+
+describe('parseStatData', () => {
+  const playerMap = new Map([
+    [1, { id: 1, name: 'T', type: 'Warrior' }],
+    [2, { id: 2, name: 'H', type: 'WhiteMage' }],
+  ])
+  const composition: Composition = {
+    players: [
+      { id: 1, job: 'WAR' },
+      { id: 2, job: 'WHM' },
+    ],
+  }
+
+  it('提取盾/治疗/血量，过滤非 statData 技能，按 p50/p90 取值', () => {
+    const events = [
+      // WAR 摆脱盾 statusId 1457
+      { type: 'absorbed', abilityGameID: 1001457, amount: 5000 },
+      // WAR 摆脱直疗 actionId 7388（含一条 overheal，应排除）
+      { type: 'heal', abilityGameID: 7388, amount: 3000 },
+      { type: 'heal', abilityGameID: 7388, amount: 9000, overheal: 50 },
+      // WAR 摆脱 HoT key 1002108
+      { type: 'heal', abilityGameID: 1002108, amount: 800 },
+      // 非 statData 技能：普通 GCD 治疗 + 携带 maxHitPoints，应被过滤出 healByAbility
+      {
+        type: 'heal',
+        abilityGameID: 99999,
+        amount: 1,
+        targetID: 1,
+        targetResources: { maxHitPoints: 200000 },
+      },
+      {
+        type: 'heal',
+        abilityGameID: 99999,
+        amount: 1,
+        targetID: 2,
+        targetResources: { maxHitPoints: 120000 },
+      },
+    ] as unknown as Parameters<typeof parseStatData>[0]
+
+    const result = parseStatData(events, playerMap, composition)
+
+    expect(result).toBeDefined()
+    expect(result!.shieldByAbility).toEqual({ 1457: 5000 })
+    expect(result!.critShieldByAbility).toEqual({})
+    expect(result!.healByAbility).toEqual({ 7388: 3000, 1002108: 800 })
+    expect(result!.critHealByAbility).toEqual({}) // 7388/1002108 非 critHeal entry key
+    expect(result!.referenceMaxHP).toBe(120000) // 非坦（WHM）最小
+    expect(result!.tankReferenceMaxHP).toBe(200000) // 坦克（WAR）最小
+  })
+
+  it('无任何匹配样本时返回 undefined', () => {
+    const events = [
+      { type: 'damage', abilityGameID: 12345, amount: 1, unmitigatedAmount: 1 },
+    ] as unknown as Parameters<typeof parseStatData>[0]
+    expect(parseStatData(events, playerMap, composition)).toBeUndefined()
   })
 })

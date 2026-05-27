@@ -218,7 +218,7 @@ export default function TableDataRow({
               onCellToggle(track, event, isMarker)
             }}
           >
-            {isLit && <div className="absolute inset-0 bg-emerald-500/30" />}
+            {isLit && <div className="pointer-events-none absolute inset-0 bg-emerald-500/30" />}
             {!isLit && cdCells.has(key) && (
               <div className="pointer-events-none absolute inset-0 bg-blue-500/15" />
             )}

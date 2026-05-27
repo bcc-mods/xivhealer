@@ -223,6 +223,33 @@ describe('computeCdCellsByEvent', () => {
     expect(result.get('d1')).toEqual(new Set())
     expect(result.get('d2')).toEqual(new Set())
   })
+
+  it('多个 cast 的 CD 区间可同时覆盖同一伤害事件', () => {
+    const actionsById = new Map([
+      [100, action(100, 10)],
+      [200, action(200, 10)],
+    ])
+    const cd = stubCd({ c1: 40, c2: 40 }) // 两者 greenEnd=10, CD 区间 [10,40)
+    const casts = [cast('c1', 1, 100, 0), cast('c2', 2, 200, 0)]
+    const result = computeCdCellsByEvent([damage('d1', 20)], casts, actionsById, cd)
+    const cdSet = result.get('d1')!
+    expect(cdSet.has(cellKey(1, 100))).toBe(true)
+    expect(cdSet.has(cellKey(2, 200))).toBe(true)
+  })
+
+  it('duration=0 技能：greenEnd===cast 时刻，CD 从 cast 时刻起命中（与时间轴一致）', () => {
+    const actionsById = new Map([[100, action(100, 0)]]) // duration=0 → greenEnd=0
+    const cd = stubCd({ c1: 30 }) // CD 区间 [0,30)
+    const result = computeCdCellsByEvent(
+      [damage('d0', 0), damage('d1', 15), damage('d2', 30)],
+      [cast('c1', 1, 100, 0)],
+      actionsById,
+      cd
+    )
+    expect(result.get('d0')?.has(cellKey(1, 100))).toBe(true) // cast 时刻即命中
+    expect(result.get('d1')?.has(cellKey(1, 100))).toBe(true)
+    expect(result.get('d2')?.has(cellKey(1, 100))).toBe(false) // rawEnd 右开
+  })
 })
 
 describe('cellKey', () => {

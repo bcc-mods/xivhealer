@@ -1232,6 +1232,30 @@ export const MITIGATION_DATA: MitigationDataSource = {
       cooldown: 90,
       executor: createBuffExecutor(1195, 15),
     },
+    {
+      id: 65,
+      name: '真言',
+      icon: '/i/000000/000216.png',
+      jobs: ['MNK'],
+      category: ['partywide'],
+      duration: 15,
+      cooldown: 90,
+      executor: createBuffExecutor(102, 15),
+    },
+    {
+      id: 24404,
+      name: '神秘纹',
+      icon: '/i/003000/003837.png',
+      jobs: ['RPR'],
+      category: ['partywide', 'heal'],
+      duration: 5,
+      cooldown: 30,
+      executor: createShieldExecutor(2597, 5), // 守护纹（盾被打穿触发活性纹 2598）
+      statDataEntries: [
+        { type: 'shield', key: 2597 },
+        { type: 'heal', key: 1002598, label: 'HoT' },
+      ],
+    },
 
     // ==================== 远程物理 DPS ====================
 
@@ -1245,6 +1269,16 @@ export const MITIGATION_DATA: MitigationDataSource = {
       duration: 15,
       cooldown: 90,
       executor: createBuffExecutor(1934, 15, { uniqueGroup: [1934, 1951, 1826] }),
+    },
+    {
+      id: 7408,
+      name: '大地神的抒情恋歌',
+      icon: '/i/002000/002615.png',
+      jobs: ['BRD'],
+      category: ['partywide'],
+      duration: 15,
+      cooldown: 120,
+      executor: createBuffExecutor(1202, 15),
     },
 
     // 机工士 (MCH)
@@ -1281,6 +1315,66 @@ export const MITIGATION_DATA: MitigationDataSource = {
       cooldown: 90,
       executor: createBuffExecutor(1826, 15, { uniqueGroup: [1934, 1951, 1826] }),
     },
+    {
+      id: 16015,
+      name: '治疗之华尔兹',
+      icon: '/i/003000/003468.png',
+      jobs: ['DNC'],
+      category: ['partywide', 'heal'],
+      duration: 0,
+      cooldown: 60,
+      executor: createHealExecutor(),
+      statDataEntries: [{ type: 'heal', key: 16015 }],
+    },
+    {
+      id: 16014,
+      name: '即兴表演',
+      icon: '/i/003000/003477.png',
+      jobs: ['DNC'],
+      category: ['partywide', 'heal'],
+      duration: 15,
+      cooldown: 120,
+      placement: not(whileStatus(1827)),
+      executor: ctx => {
+        const partyState = createBuffExecutor(2695, 15)(ctx) // HoT
+        return createBuffExecutor(1827, 15)({ ...ctx, partyState }) // 即兴表演
+      },
+      statDataEntries: [{ type: 'heal', key: 1002695, label: 'HoT' }],
+    },
+    {
+      id: 25789,
+      name: '即兴表演结束',
+      icon: '/i/003000/003479.png',
+      jobs: ['DNC'],
+      category: ['partywide', 'shield'],
+      duration: 0,
+      cooldown: 1,
+      trackGroup: 16014,
+      placement: whileStatus(1827),
+      executor: (ctx: ActionExecutionContext) => {
+        const improvStackId = 2696 // 即兴表演的层数
+        const improvBuffId = 1827 // 即兴表演
+        const shieldId = 2697 // 即兴表演结束（护盾）
+
+        // 护盾强度 = 非T max HP × 百分比；百分比按即兴层数换算：
+        // 1层5% / 2层6% / 3层7% / 4层8% / 5层10%（缺层数则无盾）。
+        const stack = ctx.partyState.statuses.find(
+          s => s.statusId === improvStackId && s.sourcePlayerId === ctx.sourcePlayerId
+        )?.stack
+        const pct = [0, 0.05, 0.06, 0.07, 0.08, 0.1][Math.min(stack ?? 0, 5)]
+        const barrier = Math.round((ctx.statistics?.referenceMaxHP ?? 0) * pct)
+
+        // 即兴表演到此结束：无论是否成盾，都移除即兴层数 (2696) 与即兴表演 (1827)。
+        const uniqueGroup = [improvStackId, improvBuffId, shieldId]
+        if (barrier <= 0) {
+          return {
+            ...ctx.partyState,
+            statuses: ctx.partyState.statuses.filter(s => !uniqueGroup.includes(s.statusId)),
+          }
+        }
+        return createShieldExecutor(shieldId, 30, { fixedBarrier: barrier, uniqueGroup })(ctx)
+      },
+    },
 
     // ==================== 远程魔法 DPS ====================
     {
@@ -1304,6 +1398,18 @@ export const MITIGATION_DATA: MitigationDataSource = {
       duration: 10,
       cooldown: 120,
       executor: createBuffExecutor(2707, 10),
+    },
+
+    // 画家 (PCT)
+    {
+      id: 34686,
+      name: '油性坦培拉涂层',
+      icon: '/i/003000/003836.png',
+      jobs: ['PCT'],
+      category: ['partywide', 'shield'],
+      duration: 10,
+      cooldown: 90,
+      executor: createShieldExecutor(1204, 10),
     },
   ],
 }

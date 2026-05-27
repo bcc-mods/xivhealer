@@ -114,21 +114,22 @@ function triggerStatusHeal(
 }
 
 /**
- * 神爱抚 (3903) → 神爱环 (3904) 链式 HoT 生成器。
+ * "盾被消耗 → 派生 HoT" 链式生成器（如 神爱抚 3903 → 神爱环 3904、守护纹 2597 → 活性纹 2598）。
  *
  * 在 onConsume / onExpire 时刻先把父盾摘掉，再对当前 partyState snapshot 治疗倍率，
- * 把每 tick 量写进新 status 的 data.tickAmount——之后 regenStatusExecutor.onTick 直接消费。
+ * 把每 tick 量写进子 status 的 data.tickAmount——之后 regenStatusExecutor.onTick 直接消费。
+ * 子 HoT 每 tick 基础量约定存在 healByAbility[1e6 + childStatusId]。
  */
-function spawnHaloRegen(
+function spawnRegenChild(
   state: PartyState,
   parent: MitigationStatus,
+  childStatusId: number,
+  duration: number,
   time: number,
   statistics?: TimelineStatData
 ): PartyState {
-  const HALO_STATUS_ID = 3904
-  const HALO_DURATION = 15
   const cleared = removeStatus(state, parent.instanceId)
-  const baseTickAmount = statistics?.healByAbility?.[1e6 + HALO_STATUS_ID] ?? 0
+  const baseTickAmount = statistics?.healByAbility?.[1e6 + childStatusId] ?? 0
   const snapshotTickAmount = computeFinalHeal(
     baseTickAmount,
     cleared,
@@ -136,9 +137,9 @@ function spawnHaloRegen(
     time
   )
   return addStatus(cleared, {
-    statusId: HALO_STATUS_ID,
+    statusId: childStatusId,
     eventTime: time,
-    duration: HALO_DURATION,
+    duration,
     sourcePlayerId: parent.sourcePlayerId,
     sourceActionId: parent.sourceActionId,
     data: { tickAmount: snapshotTickAmount, castEventId: '' },
@@ -264,6 +265,65 @@ export const STATUS_EXTRAS: Record<number, StatusExtras> = {
   2683: { isTankOnly: true, category: ['self', 'target', 'percentage'] }, // 刚玉之心
   2684: { isTankOnly: true, category: ['self', 'target', 'percentage'] }, // 刚玉之清
 
+  // 武僧
+  102: { name: '真言', isFriendly: true, category: ['partywide'], heal: 1.1 },
+
+  // 镰刀
+  // 守护纹：盾被完全打穿时挂 15s 的活性纹 (2598) HoT。
+  // 仅"盾被消耗殆尽"触发（不在自然到期触发），与 Arcane Crest 的 Crest of Time Returned 语义一致。
+  2597: {
+    name: '守护纹',
+    isFriendly: true,
+    category: ['partywide', 'shield'],
+    executor: {
+      onConsume: ctx =>
+        spawnRegenChild(ctx.partyState, ctx.status, 2598, 15, ctx.event.time, ctx.statistics),
+    },
+  },
+  2598: {
+    name: '活性纹',
+    isFriendly: true,
+    category: ['partywide', 'heal'],
+    executor: regenStatusExecutor,
+  },
+
+  // 诗人
+  1202: { name: '大地神的抒情恋歌', isFriendly: true, category: ['partywide'], heal: 1.15 },
+
+  // 舞者
+  // 即兴表演：每个 tick 给即兴层数 (2696) +1（最大 5 层），层数 buff 与 1827 同生共死。
+  1827: {
+    name: '即兴表演',
+    isFriendly: true,
+    category: [],
+    executor: {
+      onTick: ctx => {
+        const STACK_ID = 2696
+        const MAX_STACK = 5
+        const existing = ctx.partyState.statuses.find(
+          s => s.statusId === STACK_ID && s.sourcePlayerId === ctx.status.sourcePlayerId
+        )
+        // 首次：新建层数 buff，存活区间对齐 1827 的 [startTime, endTime]
+        if (!existing) {
+          return addStatus(ctx.partyState, {
+            statusId: STACK_ID,
+            eventTime: ctx.status.startTime,
+            duration: ctx.status.endTime - ctx.status.startTime,
+            stack: 1,
+            sourcePlayerId: ctx.status.sourcePlayerId,
+            sourceActionId: ctx.status.sourceActionId,
+          })
+        }
+        // 后续：保持 instanceId，仅 +1 层（封顶 5）并把到期时间继续对齐 1827
+        return updateStatus(ctx.partyState, existing.instanceId, {
+          stack: Math.min((existing.stack ?? 1) + 1, MAX_STACK),
+          endTime: ctx.status.endTime,
+        })
+      },
+    },
+  },
+  2696: { name: '舞动的热情', isFriendly: true, category: [] }, // 由 1827 onTick 累积，决定即兴表演结束 (2697) 盾量
+
   // 白魔法师
   1873: { selfHeal: 1.2 }, // 节制
   3880: {
@@ -333,8 +393,10 @@ export const STATUS_EXTRAS: Record<number, StatusExtras> = {
       // 盾被打穿 / 自然到期后挂 15s 的神爱环 (3904) HoT。
       // tickAmount 在生成时刻 snapshot（与 createRegenExecutor 的 cast-time 口径一致），
       // 之后由 regenStatusExecutor.onTick 直接消费 status.data.tickAmount。
-      onConsume: ctx => spawnHaloRegen(ctx.partyState, ctx.status, ctx.event.time, ctx.statistics),
-      onExpire: ctx => spawnHaloRegen(ctx.partyState, ctx.status, ctx.expireTime, ctx.statistics),
+      onConsume: ctx =>
+        spawnRegenChild(ctx.partyState, ctx.status, 3904, 15, ctx.event.time, ctx.statistics),
+      onExpire: ctx =>
+        spawnRegenChild(ctx.partyState, ctx.status, 3904, 15, ctx.expireTime, ctx.statistics),
     },
   },
   3904: {

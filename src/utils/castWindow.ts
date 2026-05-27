@@ -82,3 +82,43 @@ export function computeCastMarkerCells(
   }
   return result
 }
+
+/**
+ * 计算每个伤害事件落在哪些 cast 的"蓝色 CD 区间"内。
+ *
+ * 与时间轴蓝条同源：CD 右端来自 `cdBarEndFor(castEventId)`
+ *   - null     → 此 cast 不画 CD
+ *   - Infinity → CD 延伸到时间轴末尾
+ *   - 数值     → CD 右端秒数
+ *
+ * 每个 cast 的 CD 区间 = [greenEnd, rawEnd)，greenEnd = cast.timestamp + action.duration
+ * （与 computeLitCellsByEvent 的绿格同基准，保证绿/蓝衔接无缝、不重叠）。
+ * 命中规则：greenEnd <= damageEvent.time < rawEnd（左闭右开；Infinity 恒真）。
+ * 归列同绿格：按 castCellKey（trackGroup 变体归 parent 列）。
+ *
+ * @returns Map<damageEventId, Set<cellKey>>
+ */
+export function computeCdCellsByEvent(
+  damageEvents: DamageEvent[],
+  castEvents: CastEvent[],
+  actionsById: Map<number, MitigationAction>,
+  cdBarEndFor: (castEventId: string) => number | null
+): Map<string, Set<string>> {
+  const result = new Map<string, Set<string>>()
+  for (const event of damageEvents) result.set(event.id, new Set<string>())
+
+  for (const castEvent of castEvents) {
+    const action = actionsById.get(castEvent.actionId)
+    if (!action) continue
+    const rawEnd = cdBarEndFor(castEvent.id)
+    if (rawEnd === null) continue
+    const greenEnd = castEvent.timestamp + action.duration
+    const key = castCellKey(castEvent, actionsById)
+    for (const event of damageEvents) {
+      if (greenEnd <= event.time && event.time < rawEnd) {
+        result.get(event.id)!.add(key)
+      }
+    }
+  }
+  return result
+}

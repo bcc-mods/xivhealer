@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { computeLitCellsByEvent, cellKey } from './castWindow'
+import { computeLitCellsByEvent, computeCdCellsByEvent, cellKey } from './castWindow'
 import type { DamageEvent, CastEvent } from '@/types/timeline'
 import type { MitigationAction } from '@/types/mitigation'
 
@@ -99,6 +99,127 @@ describe('computeLitCellsByEvent', () => {
   it('每个伤害事件都有一个 Set（可能为空）', () => {
     const actionsById = new Map([[100, action(100, 10)]])
     const result = computeLitCellsByEvent([damage('d1', 100), damage('d2', 200)], [], actionsById)
+    expect(result.get('d1')).toEqual(new Set())
+    expect(result.get('d2')).toEqual(new Set())
+  })
+})
+
+describe('computeCdCellsByEvent', () => {
+  // cdBarEndFor 桩：按 castEventId 返回预置的 rawEnd
+  const stubCd = (map: Record<string, number | null>) => (id: string) => map[id] ?? null
+
+  it('greenEnd <= damageTime < rawEnd 时标记为 CD', () => {
+    const actionsById = new Map([[100, action(100, 10)]]) // duration=10
+    const cd = stubCd({ c1: 30 }) // cast@0 → greenEnd=10, rawEnd=30 → CD 区间 [10,30)
+    const result = computeCdCellsByEvent(
+      [damage('d1', 15)],
+      [cast('c1', 1, 100, 0)],
+      actionsById,
+      cd
+    )
+    expect(result.get('d1')?.has(cellKey(1, 100))).toBe(true)
+  })
+
+  it('damageTime === greenEnd 当刻归 CD（左闭）', () => {
+    const actionsById = new Map([[100, action(100, 10)]])
+    const cd = stubCd({ c1: 30 })
+    const result = computeCdCellsByEvent(
+      [damage('d1', 10)],
+      [cast('c1', 1, 100, 0)],
+      actionsById,
+      cd
+    )
+    expect(result.get('d1')?.has(cellKey(1, 100))).toBe(true)
+  })
+
+  it('damageTime === rawEnd 当刻不归 CD（右开）', () => {
+    const actionsById = new Map([[100, action(100, 10)]])
+    const cd = stubCd({ c1: 30 })
+    const result = computeCdCellsByEvent(
+      [damage('d1', 30)],
+      [cast('c1', 1, 100, 0)],
+      actionsById,
+      cd
+    )
+    expect(result.get('d1')?.has(cellKey(1, 100))).toBe(false)
+  })
+
+  it('绿条覆盖区间内（< greenEnd）不归 CD', () => {
+    const actionsById = new Map([[100, action(100, 10)]])
+    const cd = stubCd({ c1: 30 })
+    const result = computeCdCellsByEvent(
+      [damage('d1', 5)],
+      [cast('c1', 1, 100, 0)],
+      actionsById,
+      cd
+    )
+    expect(result.get('d1')?.has(cellKey(1, 100))).toBe(false)
+  })
+
+  it('cdBarEndFor 返回 null 时该 cast 不产生 CD', () => {
+    const actionsById = new Map([[100, action(100, 10)]])
+    const cd = stubCd({ c1: null })
+    const result = computeCdCellsByEvent(
+      [damage('d1', 15)],
+      [cast('c1', 1, 100, 0)],
+      actionsById,
+      cd
+    )
+    expect(result.get('d1')?.size).toBe(0)
+  })
+
+  it('rawEnd 为 Infinity 时延伸到时间轴末（所有 t >= greenEnd 的后续行）', () => {
+    const actionsById = new Map([[100, action(100, 10)]])
+    const cd = stubCd({ c1: Infinity }) // greenEnd=10
+    const result = computeCdCellsByEvent(
+      [damage('d1', 5), damage('d2', 50), damage('d3', 9999)],
+      [cast('c1', 1, 100, 0)],
+      actionsById,
+      cd
+    )
+    expect(result.get('d1')?.has(cellKey(1, 100))).toBe(false) // 还在绿条内
+    expect(result.get('d2')?.has(cellKey(1, 100))).toBe(true)
+    expect(result.get('d3')?.has(cellKey(1, 100))).toBe(true)
+  })
+
+  it('trackGroup 变体的 CD 归到 parent 列', () => {
+    // 200 是 100 的变体（trackGroup=100），CD 应落在 cellKey(1,100) 而非 cellKey(1,200)
+    const variant = { ...action(200, 10), trackGroup: 100 } as MitigationAction
+    const actionsById = new Map<number, MitigationAction>([
+      [100, action(100, 10)],
+      [200, variant],
+    ])
+    const cd = stubCd({ c1: 30 })
+    const result = computeCdCellsByEvent(
+      [damage('d1', 15)],
+      [cast('c1', 1, 200, 0)],
+      actionsById,
+      cd
+    )
+    expect(result.get('d1')?.has(cellKey(1, 100))).toBe(true)
+    expect(result.get('d1')?.has(cellKey(1, 200))).toBe(false)
+  })
+
+  it('actionsById 中不存在的 actionId 被跳过', () => {
+    const actionsById = new Map<number, MitigationAction>()
+    const cd = stubCd({ c1: 30 })
+    const result = computeCdCellsByEvent(
+      [damage('d1', 15)],
+      [cast('c1', 1, 999, 0)],
+      actionsById,
+      cd
+    )
+    expect(result.get('d1')?.size).toBe(0)
+  })
+
+  it('每个伤害事件都有一个 Set（可能为空）', () => {
+    const actionsById = new Map([[100, action(100, 10)]])
+    const result = computeCdCellsByEvent(
+      [damage('d1', 100), damage('d2', 200)],
+      [],
+      actionsById,
+      () => null
+    )
     expect(result.get('d1')).toEqual(new Set())
     expect(result.get('d2')).toEqual(new Set())
   })

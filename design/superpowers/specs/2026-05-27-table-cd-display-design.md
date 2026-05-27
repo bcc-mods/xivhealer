@@ -120,3 +120,89 @@ const cdCellsByEvent = useMemo(() => {
 - 不在表格显示 CD 剩余秒数文本（时间轴蓝条末端有文本，但表格离散网格无合适落点；本 issue 只要求「能看出是否在冷却」）。
 - 不统一表格绿格与 Canvas 绿条的 `greenEnd` 基准（`duration` vs `castEffectiveEnd`），属既有差异、超出范围。
 - 不为 CD 格添加交互（点击行为维持现状：CD 格视作空白格，沿用 `handleCellToggle` 的放置 / 拒绝逻辑）。
+
+---
+
+# 追加：斜纹「不可放置」阴影（第二阶段）
+
+> 把时间轴的斜纹「不可放置」阴影按相同逻辑搬到表格，与 CD 显示并列。
+
+## 背景
+
+时间轴除蓝色 CD 条外，编辑模式下还画一层**灰色斜纹阴影**，标记「此处不能放置该技能」的区间（CD 冲突前向窗口 + placement 非法区）。表格视图缺这层信息，排轴时同样难判断某格能否落子。
+
+## 目标
+
+为表格每个技能列补充斜纹阴影，**复用时间轴同一数据来源与同一逻辑**，与 Canvas 行为对齐：仅编辑模式显示；斜纹只在非绿非蓝格出现。
+
+## 数据来源（逐轨，与时间轴同源）
+
+阴影是**逐轨**（per trackGroup）计算，不是逐 cast。对每个技能列 `track`（`playerId` + `trackGroup`），照搬 Canvas 的分支（见 `SkillTracksCanvas.tsx:255-268`）：
+
+- `parent.cooldown <= 3 && !parent.placement` → 不画（纯 CD 冲突窗口对 GCD 级技能是噪音）
+- `parent.cooldown <= 3`（有 placement）→ `engine.computePlacementShadow(groupId, playerId)`（只画 placement 非法区）
+- 否则 → `engine.computeTrackShadow(groupId, playerId)`（完整阴影，含前向 CD 提示）
+
+`groupId = effectiveTrackGroup(parent)`（`src/types/mitigation.ts`）。表格无拖拽，`excludeCastEventId` 传 `undefined`。`engine`（`PlacementEngine`）表格已构造，提供 `computeTrackShadow` / `computePlacementShadow`，返回 `Interval[]`（`{ from, to }`，`src/utils/placement/types.ts`）。
+
+## 离散映射
+
+`src/utils/castWindow.ts` 新增 `computeShadowCellsByEvent`，与 lit/cd 并列，但驱动源是 `skillTracks`（`SkillTrack[]`）而非 castEvents：
+
+```
+computeShadowCellsByEvent(
+  damageEvents: DamageEvent[],
+  skillTracks: SkillTrack[],
+  shadowIntervalsForTrack: (track: SkillTrack) => Interval[]
+): Map<string, Set<string>>   // Map<damageEventId, Set<cellKey>>
+```
+
+逻辑：先为每个伤害事件预置空 Set；对每个 track 取 `intervals = shadowIntervalsForTrack(track)`，命中 `from <= event.time < to`（左闭右开，与 cd 一致）的事件按 `cellKey(track.playerId, track.actionId)` 加入。
+
+**分支逻辑（cd<=3 / placement）放在 `index.tsx` 构造 `shadowIntervalsForTrack` 回调里**（封装 engine 调用 + `effectiveTrackGroup`），纯函数只做区间→单元格映射，便于单测且不耦合 engine。
+
+> `track.actionId` 即列的 trackGroup id，与 lit/cd 渲染时 `cellKey(track.playerId, track.actionId)` 同 key，无需再过 `effectiveTrackGroup`。
+
+## 绿/蓝/斜纹优先级
+
+不在函数内做区间相减；沿用现有「绿压蓝」同款渲染优先级，在 `TableDataRow` 内三层互斥：
+
+```tsx
+{isLit && <绿底 bg-emerald-500/30>}
+{!isLit && cdCells.has(key) && <蓝底 bg-blue-500/15>}
+{!isLit && !cdCells.has(key) && shadowCells.has(key) && <斜纹>}
+```
+
+即 **绿 > 蓝 > 斜纹**，斜纹只在非绿非蓝格出现——等价于 Canvas「从 raw shadow 减掉绿+蓝可见条」（`subtractIntervals`）的视觉结果，但更简单，无需区间运算。
+
+## 斜纹样式
+
+`<td>` 内一层 `pointer-events-none absolute inset-0`，用 `repeating-linear-gradient(45deg, ...)` 画灰色斜纹，周期 7px（5px 透明 + 2px 线），配色对齐 Canvas `cooldownStripe`：
+
+- 亮色：`rgba(120, 120, 120, 0.22)`
+- 暗色（`dark:`）：`rgba(160, 160, 160, 0.25)`
+
+## 接线 + 门控
+
+`index.tsx` 新增 `shadowCellsByEvent` useMemo：仅当 `!isReadOnly && engine && timeline` 才计算，否则返回空 Map（仅编辑模式显示，与 Canvas `!isReadOnly` 对齐）。依赖数组 `[timeline, engine, isReadOnly, filteredDamageEvents, skillTracks, actionsById]`。`isReadOnly` 来自已有的 `useEditorReadOnly()`。向 `TableDataRow` 传 `shadowCells={shadowCellsByEvent.get(row.id) ?? new Set()}`。
+
+## 测试
+
+`src/utils/castWindow.test.ts` 补 `computeShadowCellsByEvent` 用例：基本区间映射、`[from, to)` 边界（左闭右开）、单轨多区间、空区间（回调返回 `[]`）、逐轨 keying（不同 track 独立）、每事件都有 Set（可能为空）。
+
+## 影响范围（第二阶段）
+
+| 文件                                            | 改动                                                                      |
+| ----------------------------------------------- | ------------------------------------------------------------------------- |
+| `src/utils/castWindow.ts`                       | 新增 `computeShadowCellsByEvent`                                          |
+| `src/utils/castWindow.test.ts`                  | 新增上述用例                                                              |
+| `src/components/TimelineTable/TableDataRow.tsx` | 新增 `shadowCells` prop + 斜纹层                                          |
+| `src/components/TimelineTable/index.tsx`        | 新增 `shadowCellsByEvent` useMemo + `shadowIntervalsForTrack` 回调 + 传参 |
+
+复用 Canvas 同款 `effectiveTrackGroup` 与分支逻辑，不改 Canvas、不改 engine、不改资源模型。
+
+## 非目标（第二阶段）
+
+- 不在表格做 `subtractIntervals` 区间相减（用渲染优先级替代）。
+- 不支持拖拽态的 shadow 重算（表格无拖拽，`excludeCastEventId` 恒 `undefined`）。
+- 不改 Canvas 既有阴影逻辑。

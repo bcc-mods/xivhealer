@@ -1,0 +1,79 @@
+name: 🐛 错误报告
+description: 报告功能异常、界面错误或崩溃（数值/数据不准请用「数据问题」模板）
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢反馈！请尽量填全以下信息，能大幅加快定位速度。
+        如果问题涉及具体战斗，**附上 FFLogs 链接**最有帮助。
+
+  - type: textarea
+    id: description
+    attributes:
+      label: 问题描述
+      description: 简要说明发生了什么、与预期有何不同。
+      placeholder: 例：导入后界面卡死 / 伤害统计不显示 / 导入时提示「未知错误」等。
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      description: 一步步说明如何触发该问题。
+      placeholder: |
+        1. 打开首页
+        2. 点击「从 FFLogs 导入」并粘贴链接
+        3. 观察到 ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望行为
+      description: 你认为正确的结果应该是什么样？
+    validations:
+      required: false
+
+  - type: input
+    id: fflogs
+    attributes:
+      label: FFLogs 链接
+      description: 若问题与某场战斗 / 导入相关，请粘贴 FFLogs 报告或具体 fight 链接。
+      placeholder: https://www.fflogs.com/reports/xxxxxxxx#fight=1
+    validations:
+      required: false
+
+  - type: input
+    id: encounter
+    attributes:
+      label: 副本 / 战斗
+      description: 涉及的副本或 Boss 名称。
+      placeholder: 例：光暗未来绝境战
+    validations:
+      required: false
+
+  - type: dropdown
+    id: env
+    attributes:
+      label: 运行环境
+      description: 在什么设备 / 浏览器上遇到的？
+      options:
+        - 桌面端 Chrome / Edge
+        - 桌面端 Firefox
+        - 桌面端 Safari
+        - 移动端浏览器
+        - 其他（请在描述中说明）
+    validations:
+      required: false
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: 截图 / 控制台报错 / 其他补充
+      description: 可直接粘贴截图；如有控制台（F12）红色报错，一并贴上。
+    validations:
+      required: false

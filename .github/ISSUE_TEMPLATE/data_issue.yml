@@ -1,0 +1,93 @@
+name: 📊 数据 / 数值问题
+description: 减伤数值不对、技能数据缺失、状态映射或 FFLogs 导入解析错误
+title: "[Data] "
+labels: ["data"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        用于报告**数据准确性**问题，例如：
+        某个减伤百分比 / 盾值算错、技能缺失或冷却不对、
+        FFLogs 导入后某状态没被识别等。
+
+  - type: dropdown
+    id: category
+    attributes:
+      label: 问题类型
+      options:
+        - 减伤数值不对（百分比 / 盾值）
+        - 技能数据缺失或错误（冷却、持续、充能等）
+        - 状态映射问题（FFLogs 状态 ID 未识别）
+        - 导入解析错误（导入后结果异常）
+        - 其他
+    validations:
+      required: true
+
+  - type: input
+    id: action
+    attributes:
+      label: 相关技能 / Buff
+      description: 涉及的技能名或 Buff 名
+      placeholder: 例：某减伤技能
+    validations:
+      required: true
+
+  - type: dropdown
+    id: job
+    attributes:
+      label: 相关职业
+      description: 问题涉及的职业。
+      options:
+        - 骑士
+        - 战士
+        - 暗黑骑士
+        - 绝枪战士
+        - 白魔法师
+        - 占星术士
+        - 贤者
+        - 学者
+        - 武僧
+        - 龙骑士
+        - 忍者
+        - 武士
+        - 钐镰客
+        - 蝰蛇剑士
+        - 吟游诗人
+        - 机工士
+        - 舞者
+        - 黑魔法师
+        - 召唤师
+        - 赤魔法师
+        - 绘灵法师
+        - 其他 / 多职业
+        - 不涉及具体职业
+    validations:
+      required: false
+
+  - type: textarea
+    id: expected-vs-actual
+    attributes:
+      label: 期望值 vs 实际值
+      description: 工具当前显示什么？正确值应该是多少？尽量给出依据。
+      placeholder: |
+        实际：显示减伤 10%
+        期望：应为 15%
+        依据：技能说明 / 实测 / 其他工具
+    validations:
+      required: true
+
+  - type: input
+    id: fflogs
+    attributes:
+      label: FFLogs 链接
+      description: 若与某场战斗导入相关，请粘贴具体 fight 链接，便于复现解析。
+      placeholder: https://www.fflogs.com/reports/xxxxxxxx#fight=1
+    validations:
+      required: false
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: 截图 / 其他补充
+    validations:
+      required: false

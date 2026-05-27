@@ -1245,7 +1245,7 @@ export const MITIGATION_DATA: MitigationDataSource = {
     {
       id: 24404,
       name: '神秘纹',
-      icon: '/i/003000/003837.png',
+      icon: '/i/003000/003632.png',
       jobs: ['RPR'],
       category: ['partywide', 'heal'],
       duration: 5,

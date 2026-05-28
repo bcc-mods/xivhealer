@@ -1,5 +1,8 @@
 # [Healerbook](https://xivhealer.com)
 
+[![PR Check](https://github.com/KawashiroNitori/healerbook/actions/workflows/pr-check.yml/badge.svg)](https://github.com/KawashiroNitori/healerbook/actions/workflows/pr-check.yml)
+[![codecov](https://codecov.io/gh/KawashiroNitori/healerbook/graph/badge.svg)](https://codecov.io/gh/KawashiroNitori/healerbook)
+
 FF14 减伤规划工具，帮助治疗和坦克职业可视化地安排副本中的减伤技能。
 
 ### 创建时间轴

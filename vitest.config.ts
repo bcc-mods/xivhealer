@@ -1,4 +1,4 @@
-import { defineConfig } from 'vitest/config'
+import { coverageConfigDefaults, defineConfig } from 'vitest/config'
 import path from 'path'
 
 export default defineConfig({
@@ -28,5 +28,12 @@ export default defineConfig({
     globals: true,
     environment: 'node',
     exclude: ['**/node_modules/**', '**/dist/**', '**/ff14-overlay-vue/**', '**/*.workers.test.ts'],
+    coverage: {
+      exclude: [
+        ...coverageConfigDefaults.exclude,
+        '3rdparty/**',
+        'src/workers/collab/__stubs__/**',
+      ],
+    },
   },
 })

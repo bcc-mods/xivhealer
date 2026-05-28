@@ -121,6 +121,23 @@ export function validateCastsForImport(args: ValidateCastsArgs): {
   return { kept: accepted, skipped }
 }
 
+export function dedupeSyncEvents(
+  incoming: SyncEvent[],
+  existing: SyncEvent[]
+): { kept: SyncEvent[]; dedupedCount: number } {
+  const taken = new Set(existing.map(s => s.actionId))
+  const kept: SyncEvent[] = []
+  let dedupedCount = 0
+  for (const s of incoming) {
+    if (taken.has(s.actionId)) {
+      dedupedCount++
+      continue
+    }
+    kept.push(s)
+  }
+  return { kept, dedupedCount }
+}
+
 export function extractImportableFromTimeline(t: Timeline): ImportableSubset {
   const parts: string[] = []
   if (t.fflogsSource) {

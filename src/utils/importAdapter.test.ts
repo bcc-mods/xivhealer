@@ -1,11 +1,12 @@
 import { describe, it, expect } from 'vitest'
-import type { Timeline, Composition } from '@/types/timeline'
+import type { Timeline, Composition, SyncEvent } from '@/types/timeline'
 import type { CastEvent } from '@/types/timeline'
 import {
   extractImportableFromTimeline,
   filterByRange,
   buildPlayerIdMap,
   validateCastsForImport,
+  dedupeSyncEvents,
 } from './importAdapter'
 import { createPlacementEngine } from '@/utils/placement/engine'
 import { MITIGATION_DATA } from '@/data/mitigationActions'
@@ -248,5 +249,37 @@ describe('validateCastsForImport', () => {
     expect(result.kept[0].playerId).toBe(1)
     expect(result.kept[0].actionId).toBe(actionId)
     expect(result.skipped).toBe(0)
+  })
+})
+
+const sync = (actionId: number, time: number): SyncEvent => ({
+  time,
+  type: 'cast',
+  actionId,
+  actionName: `a${actionId}`,
+  window: [2, 2],
+  syncOnce: false,
+})
+
+describe('dedupeSyncEvents', () => {
+  it('existing 已有 actionId → 整条 incoming 丢', () => {
+    const existing: SyncEvent[] = [sync(100, 5)]
+    const incoming: SyncEvent[] = [sync(100, 10), sync(100, 20), sync(200, 30)]
+    const out = dedupeSyncEvents(incoming, existing)
+    expect(out.kept.map(s => s.actionId)).toEqual([200])
+    expect(out.dedupedCount).toBe(2)
+  })
+
+  it('existing 为空 → 全部保留', () => {
+    const incoming: SyncEvent[] = [sync(100, 1), sync(200, 2)]
+    const out = dedupeSyncEvents(incoming, [])
+    expect(out.kept).toHaveLength(2)
+    expect(out.dedupedCount).toBe(0)
+  })
+
+  it('incoming 批内同 actionId 多次 → 全部保留', () => {
+    const incoming: SyncEvent[] = [sync(100, 1), sync(100, 2), sync(100, 3)]
+    const out = dedupeSyncEvents(incoming, [])
+    expect(out.kept).toHaveLength(3)
   })
 })

@@ -148,4 +148,6 @@ export const SOUMA_SYNC_RULES: ReadonlyMap<number, SoumaSyncRule> = new Map<numb
   [0xa82d, { type: 'cast', window: [60, 60], syncOnce: true, battleOnce: true }],
   // 极火车 无尽狂奔
   [0xb24d, { type: 'cast', window: [60, 60], syncOnce: true, battleOnce: true }],
+  // 极恩欧 无光的世界
+  [0xc36d, { type: 'cast', window: [60, 60], syncOnce: true, battleOnce: true }],
 ])

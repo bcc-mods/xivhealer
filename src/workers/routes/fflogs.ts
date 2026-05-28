@@ -129,7 +129,11 @@ app.get('/import', async c => {
     if (fight.encounterID) {
       const result = getEncounterWithTier(fight.encounterID)
       if (result) {
-        timelineName = `${result.tier.name} - ${result.encounter.name}`
+        // 单副本 tier（如绝境战）的 tier.name === encounter.name，避免拼成 "X - X"
+        timelineName =
+          result.tier.name === result.encounter.name
+            ? result.tier.name
+            : `${result.tier.name} - ${result.encounter.name}`
       }
     }
 

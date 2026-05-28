@@ -42,6 +42,8 @@ import type { DamageEvent } from '@/types/timeline'
 import TableHeader from './TableHeader'
 import TableDataRow from './TableDataRow'
 import AnnotationRow from './AnnotationRow'
+import AddDamageRow from './AddDamageRow'
+import AddEventDialog from '../AddEventDialog'
 import {
   HEADER_HEIGHT,
   TIME_COL_WIDTH,
@@ -184,6 +186,17 @@ export default function TimelineTableView() {
     if (!timeline) return []
     return mergeAndSortRows(filteredDamageEvents, timeline.annotations ?? [])
   }, [filteredDamageEvents, timeline])
+
+  // "添加伤害事件"行的对话框开关；默认时间取最后一个伤害事件的 time，空表格则 0
+  const [showAddDialog, setShowAddDialog] = useState(false)
+  const lastDamageTime = useMemo(() => {
+    if (!timeline || timeline.damageEvents.length === 0) return 0
+    let max = timeline.damageEvents[0].time
+    for (const ev of timeline.damageEvents) {
+      if (ev.time > max) max = ev.time
+    }
+    return max
+  }, [timeline])
 
   // 跟踪外层滚动容器的尺寸：用于右侧阴影显隐和注释内容宽度
   const wrapperRef = useRef<HTMLDivElement>(null)
@@ -391,9 +404,32 @@ export default function TimelineTableView() {
                 />
               )
             )}
+            {!isReadOnly && (
+              <AddDamageRow
+                totalColSpan={1 + restColSpan}
+                wrapperWidth={wrapperWidth}
+                tableWidth={tableWidth}
+                onClick={() => setShowAddDialog(true)}
+              />
+            )}
           </tbody>
         </table>
+        {/* 表格底部 sticky 阴影：与顶部对称。长表格滚动时粘在视口底，短表格时
+            自然落在末行下方做收尾。marginTop: -16 与末行重叠 */}
+        <div
+          aria-hidden
+          className="pointer-events-none sticky left-0 z-[15] w-full"
+          style={{
+            bottom: 0,
+            height: 16,
+            marginTop: -16,
+            background: 'linear-gradient(to top, rgba(0,0,0,0.18), rgba(0,0,0,0))',
+          }}
+        />
       </div>
+      {showAddDialog && (
+        <AddEventDialog open onClose={() => setShowAddDialog(false)} defaultTime={lastDamageTime} />
+      )}
     </div>
   )
 }

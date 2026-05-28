@@ -11,6 +11,9 @@ import { useEffect, useRef, useState } from 'react'
 import { Loader2 } from 'lucide-react'
 import { Modal, ModalHeader, ModalTitle, ModalFooter } from '@/components/ui/modal'
 import { Button } from '@/components/ui/button'
+import { TimeInput } from '@/components/ui/time-input'
+import { Checkbox } from '@/components/ui/checkbox'
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { apiClient } from '@/api/apiClient'
 import { parseFFLogsUrl } from '@/utils/fflogsParser'
 import { parseFromAny } from '@/utils/timelineFormat'
@@ -44,6 +47,14 @@ export default function ImportIntoTimelineDialog({ open, onClose }: ImportIntoTi
   const currentEncounter = timeline?.encounter
   const [templateEvents, setTemplateEvents] = useState<DamageEvent[] | null>(null)
   const [templatePrefetching, setTemplatePrefetching] = useState(false)
+
+  // Step 2 配置状态
+  const [includeDamage, setIncludeDamage] = useState(true)
+  const [includeCast, setIncludeCast] = useState(true)
+  const [rangeMode, setRangeMode] = useState<'range' | 'all'>('range')
+  const [rangeStart, setRangeStart] = useState(0)
+  const [rangeEnd, setRangeEnd] = useState(0)
+  const [rangeEndUnlimited, setRangeEndUnlimited] = useState(true)
 
   // 自动聚焦 + 剪贴板探测
   useEffect(() => {
@@ -94,6 +105,24 @@ export default function ImportIntoTimelineDialog({ open, onClose }: ImportIntoTi
       ignore = true
     }
   }, [open, currentEncounter?.id])
+
+  // 进 Step 2 时初始化时间范围
+  useEffect(() => {
+    if (step !== 2 || !timeline) return
+    const dMax = timeline.damageEvents.reduce((m, e) => Math.max(m, e.time), 0)
+    const cMax = timeline.castEvents.reduce((m, e) => Math.max(m, e.timestamp), 0)
+    setRangeStart(Math.max(dMax, cMax))
+    setRangeEnd(Math.max(dMax, cMax))
+    setRangeEndUnlimited(true)
+    setRangeMode('range')
+    // 模板源没 castEvents，强制取消勾选
+    if (source === 'template') {
+      setIncludeCast(false)
+    } else {
+      setIncludeCast(true)
+    }
+    setIncludeDamage(true)
+  }, [step, timeline, source])
 
   const parsedUrl = url ? parseFFLogsUrl(url) : null
   const urlValid = !!parsedUrl?.reportCode
@@ -264,10 +293,74 @@ export default function ImportIntoTimelineDialog({ open, onClose }: ImportIntoTi
         )}
 
         {step === 2 && parsed && (
-          <div className="text-sm text-muted-foreground">
-            已解析：{parsed.sourceLabel} · {parsed.damageEvents.length} 伤害 /{' '}
-            {parsed.castEvents.length} 技能
-            <p className="text-xs mt-2">（Task 9-13 接入配置区与确认按钮）</p>
+          <div className="space-y-5">
+            <div className="rounded-md bg-blue-50 dark:bg-blue-950/50 border border-blue-200 dark:border-blue-800 px-3 py-2 text-sm text-blue-700 dark:text-blue-300">
+              已解析：{parsed.sourceLabel} · {parsed.damageEvents.length} 伤害
+              {source === 'fflogs' && ` / ${parsed.castEvents.length} 技能`}
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">
+                数据类型
+              </label>
+              <div className="space-y-2">
+                <label className="flex items-center gap-2 text-sm">
+                  <Checkbox checked={includeDamage} onCheckedChange={v => setIncludeDamage(!!v)} />
+                  伤害事件{' '}
+                  <span className="text-muted-foreground">（{parsed.damageEvents.length} 条）</span>
+                </label>
+                {source === 'fflogs' && (
+                  <label className="flex items-center gap-2 text-sm">
+                    <Checkbox checked={includeCast} onCheckedChange={v => setIncludeCast(!!v)} />
+                    技能使用{' '}
+                    <span className="text-muted-foreground">（{parsed.castEvents.length} 条）</span>
+                  </label>
+                )}
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">
+                时间范围
+              </label>
+              <RadioGroup
+                value={rangeMode}
+                onValueChange={v => setRangeMode(v as 'range' | 'all')}
+                className="flex gap-4 mb-2"
+              >
+                <label className="flex items-center gap-2 text-sm">
+                  <RadioGroupItem value="range" /> 时间区间
+                </label>
+                <label className="flex items-center gap-2 text-sm">
+                  <RadioGroupItem value="all" /> 全部
+                </label>
+              </RadioGroup>
+
+              {rangeMode === 'range' ? (
+                <div className="flex items-center gap-2">
+                  <TimeInput value={rangeStart} onChange={setRangeStart} size="sm" />
+                  <span className="text-muted-foreground">~</span>
+                  {rangeEndUnlimited ? (
+                    <div className="px-3 py-1 border border-border rounded text-muted-foreground text-sm font-mono min-w-[88px] text-center">
+                      ∞
+                    </div>
+                  ) : (
+                    <TimeInput value={rangeEnd} onChange={setRangeEnd} size="sm" />
+                  )}
+                  <label className="flex items-center gap-2 text-sm ml-2">
+                    <Checkbox
+                      checked={rangeEndUnlimited}
+                      onCheckedChange={v => setRangeEndUnlimited(!!v)}
+                    />
+                    至时间轴结尾
+                  </label>
+                </div>
+              ) : (
+                <div className="rounded-md border border-red-300 bg-red-50 dark:bg-red-950/30 dark:border-red-800 px-3 py-2 text-sm text-red-700 dark:text-red-300">
+                  ⚠ 全部模式可能与时间轴已有事件重复。建议改用「时间区间」并选择空白时间段。
+                </div>
+              )}
+            </div>
           </div>
         )}
       </div>

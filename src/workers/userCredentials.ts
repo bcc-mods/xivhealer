@@ -82,6 +82,9 @@ export async function findCredential(
  * 命中分支用 db.batch 保证两条 UPDATE 原子执行。
  * 覆盖存量「占位凭据（空 token）」首次真正登录时补写 token 的场景。
  * 任一写库失败抛错，由调用方（auth callback）转 HTTP 500。
+ *
+ * 注意：input.refreshToken 为空串会覆盖既有 refresh_token —— FFLogs 场景正确
+ * （授权码流程不下发 refresh_token）；未来其他 provider 复用本函数需自行确保传入有效值。
  */
 export async function loginWithOAuth(
   db: D1Database,

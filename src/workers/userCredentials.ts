@@ -64,6 +64,39 @@ export async function findCredential(
 }
 
 /**
+ * 登录编排：findCredential 命中→在一个 batch 内 UPDATE 凭据 data + UPDATE users.name（isNew=false，复用既有 user_id）；
+ * 未命中→调 registerWithOAuth（isNew=true）。
+ * 命中分支用 db.batch 保证两条 UPDATE 原子执行。
+ * 覆盖存量「占位凭据（空 token）」首次真正登录时补写 token 的场景。
+ * 任一写库失败抛错，由调用方（auth callback）转 HTTP 500。
+ */
+export async function loginWithOAuth(
+  db: D1Database,
+  input: OAuthLoginInput
+): Promise<{ userId: number; isNew: boolean }> {
+  const cred = await findCredential(db, input.provider, input.providerUserId)
+  if (cred) {
+    const now = Math.floor(Date.now() / 1000)
+    const data = serializeOAuthData({
+      access_token: input.accessToken,
+      refresh_token: input.refreshToken,
+      expires_at: input.expiresAt,
+    })
+    await db.batch([
+      db
+        .prepare('UPDATE user_credentials SET data = ?, updated_at = ? WHERE id = ?')
+        .bind(data, now, cred.id),
+      db
+        .prepare('UPDATE users SET name = ?, updated_at = ? WHERE id = ?')
+        .bind(input.name, now, cred.user_id),
+    ])
+    return { userId: cred.user_id, isNew: false }
+  }
+  const { userId } = await registerWithOAuth(db, input)
+  return { userId, isNew: true }
+}
+
+/**
  * register 流程：单条 batch（隐式事务）内 INSERT users + INSERT user_credentials。
  * 第二条用 last_insert_rowid() 引用刚建的 users.id（同一连接顺序执行）。
  * 唯一约束冲突或写库失败时整批回滚并抛错。

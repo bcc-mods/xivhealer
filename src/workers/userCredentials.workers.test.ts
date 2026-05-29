@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { env } from 'cloudflare:test'
-import { findCredential, registerWithOAuth } from './userCredentials'
+import { findCredential, loginWithOAuth, registerWithOAuth } from './userCredentials'
 
 const db = () => env.healerbook_timelines
 
@@ -84,5 +84,68 @@ describe('registerWithOAuth + findCredential', () => {
     await expect(
       registerWithOAuth(env.healerbook_timelines, { ...input, providerUserId: 'reg-dup' })
     ).rejects.toThrow()
+  })
+})
+
+describe('loginWithOAuth', () => {
+  const base = {
+    provider: 'fflogs',
+    providerUserId: 'login-1',
+    name: 'First',
+    accessToken: 'tok-1',
+    refreshToken: '',
+    expiresAt: 1000,
+  }
+
+  it('首次登录 isNew=true，再次登录 isNew=false、userId 不变、token 与 name 被更新', async () => {
+    // 首次登录
+    const r1 = await loginWithOAuth(env.healerbook_timelines, base)
+    expect(r1.isNew).toBe(true)
+    expect(r1.userId).toBeGreaterThanOrEqual(1000001)
+
+    // 再次登录（同一 provider+identifier，更新 name 和 token）
+    const r2 = await loginWithOAuth(env.healerbook_timelines, {
+      ...base,
+      name: 'Renamed',
+      accessToken: 'tok-2',
+      expiresAt: 2000,
+    })
+    expect(r2.isNew).toBe(false)
+    expect(r2.userId).toBe(r1.userId)
+
+    const cred = await findCredential(env.healerbook_timelines, 'fflogs', 'login-1')
+    expect(JSON.parse(cred!.data).access_token).toBe('tok-2')
+    expect(JSON.parse(cred!.data).expires_at).toBe(2000)
+    const u = await env.healerbook_timelines
+      .prepare('SELECT name FROM users WHERE id = ?')
+      .bind(r2.userId)
+      .first<{ name: string }>()
+    expect(u?.name).toBe('Renamed')
+  })
+
+  it('命中存量占位凭据(空 token)时补写 token，复用其 user_id', async () => {
+    // 模拟回填产生的存量：user_id=42 + 空 token 占位凭据
+    const now = 1
+    await env.healerbook_timelines
+      .prepare('INSERT INTO users (id, name, created_at, updated_at) VALUES (42, ?, ?, ?)')
+      .bind('Legacy', now, now)
+      .run()
+    await env.healerbook_timelines
+      .prepare(
+        "INSERT INTO user_credentials (user_id, type, provider, identifier, data, created_at, updated_at) VALUES (42, 'oauth', 'fflogs', '42', json_object('access_token','','refresh_token','','expires_at',0), ?, ?)"
+      )
+      .bind(now, now)
+      .run()
+
+    const r = await loginWithOAuth(env.healerbook_timelines, {
+      ...base,
+      providerUserId: '42',
+      name: 'Legacy2',
+      accessToken: 'filled',
+      expiresAt: 9999,
+    })
+    expect(r).toEqual({ userId: 42, isNew: false })
+    const cred = await findCredential(env.healerbook_timelines, 'fflogs', '42')
+    expect(JSON.parse(cred!.data).access_token).toBe('filled')
   })
 })

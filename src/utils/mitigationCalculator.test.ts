@@ -918,6 +918,43 @@ describe('MitigationCalculator', () => {
       // clamp 到 100% → 全免
       expect(result.finalDamage).toBe(0)
     })
+
+    it('临时盾在百分比减伤后减算', () => {
+      const event: DamageEvent = {
+        ...makeEvent(100000, 10, 'magical', 'aoe'),
+        tempMitigations: [{ id: 'tm1', name: '临时盾', type: 'shield', value: 30000 }],
+      }
+      const result = calculator.calculate(event, basePartyState)
+      expect(result.finalDamage).toBe(70000)
+      // candidateDamage 是盾前伤害，不含临时盾
+      expect(result.candidateDamage).toBe(100000)
+      expect(result.appliedStatuses).toHaveLength(0)
+    })
+
+    it('临时百分比 + 临时盾组合：先乘后减', () => {
+      const event: DamageEvent = {
+        ...makeEvent(100000, 10, 'magical', 'aoe'),
+        tempMitigations: [
+          { id: 'tm1', name: '临时20%', type: 'percent', value: 20 },
+          { id: 'tm2', name: '临时盾', type: 'shield', value: 30000 },
+        ],
+      }
+      // candidateDamage = 100000*0.8 = 80000；finalDamage = 80000-30000 = 50000
+      const result = calculator.calculate(event, basePartyState)
+      expect(result.candidateDamage).toBe(80000)
+      expect(result.finalDamage).toBe(50000)
+      // candidateDamage - finalDamage = 30000 = 临时盾吸收量（供色块归类）
+      expect(result.candidateDamage! - result.finalDamage).toBe(30000)
+    })
+
+    it('临时盾超过剩余伤害时 finalDamage 夹 0 不为负', () => {
+      const event: DamageEvent = {
+        ...makeEvent(20000, 10, 'magical', 'aoe'),
+        tempMitigations: [{ id: 'tm1', name: '大盾', type: 'shield', value: 50000 }],
+      }
+      const result = calculator.calculate(event, basePartyState)
+      expect(result.finalDamage).toBe(0)
+    })
   })
 })
 

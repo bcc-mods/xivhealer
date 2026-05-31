@@ -1119,7 +1119,17 @@ export class MitigationCalculator {
       if (playerDamage <= 0) break
     }
 
-    const damage = playerDamage
+    let damage = playerDamage
+
+    // 临时盾减伤（仅本事件）：真实盾扣完后再扣，不动任何真实 status 的 remainingBarrier，
+    // 不触发 onConsume、不进 appliedStatuses（有独立 section 展示）。candidateDamage 不变，
+    // 故 candidateDamage − finalDamage 自然包含临时盾吸收量，供色块归类。
+    const tempShieldTotal = (event.tempMitigations ?? [])
+      .filter(tm => tm.type === 'shield')
+      .reduce((sum, tm) => sum + Math.max(0, tm.value), 0)
+    if (tempShieldTotal > 0) {
+      damage = Math.max(0, damage - tempShieldTotal)
+    }
 
     // 阶段 B（仅 partial_final_aoe）：按 max(自身 cd, segCandidateMax) 给剩余盾补差额。
     // 阶段 A 已按 candidateDamage 实扣过一遍，这里只补"effectiveDamage - candidateDamage"那部分。

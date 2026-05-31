@@ -1024,7 +1024,8 @@ export class MitigationCalculator {
       }
     }
 
-    // 临时百分比减伤（仅本事件）：乘算折入 multiplier，不进 appliedStatuses（有独立 section 展示）
+    // 临时减伤（仅本事件）：百分比在此乘算折入 multiplier；盾（type='shield'）由 Phase 3 真实盾
+    // 之后单独减算（见下文 Phase 3）。两者都不进 appliedStatuses——临时减伤由 UI 独立 section 展示。
     for (const tm of event.tempMitigations ?? []) {
       if (tm.type === 'percent') {
         const pct = Math.min(100, Math.max(0, tm.value))

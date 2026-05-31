@@ -879,6 +879,7 @@ describe('MitigationCalculator', () => {
       const result = calculator.calculate(event, basePartyState)
       expect(result.finalDamage).toBe(80000)
       expect(result.candidateDamage).toBe(80000)
+      expect(result.mitigationPercentage).toBe(20)
       // 临时减伤不进 appliedStatuses（有独立 section 展示）
       expect(result.appliedStatuses).toHaveLength(0)
     })
@@ -904,6 +905,7 @@ describe('MitigationCalculator', () => {
       // 真实 10%（节制）× 临时 20% = 100000 * 0.9 * 0.8 = 72000
       const result = calculator.calculate(event, partyState)
       expect(result.finalDamage).toBe(72000)
+      expect(result.mitigationPercentage).toBe(28)
       expect(result.appliedStatuses).toHaveLength(1) // 只有真实状态进 appliedStatuses
     })
 

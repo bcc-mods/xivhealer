@@ -793,7 +793,7 @@ export default function PropertyPanel() {
           </div>
         )}
 
-        {/* 临时减伤（仅编辑模式；组件内部对 isReadOnly 返回 null） */}
+        {/* 临时减伤（仅编辑模式 + 有计算结果时显示；组件内部对 isReadOnly 返回 null） */}
         {!timeline.isReplayMode && result && <TempMitigationSection event={event} />}
 
         {/* Player Damage Details (回放模式) */}

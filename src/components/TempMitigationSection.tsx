@@ -5,7 +5,7 @@
 
 import { useState } from 'react'
 import { Plus, Trash2 } from 'lucide-react'
-import { nanoid } from 'nanoid'
+import { generateObjectId } from '@/utils/shortId'
 import { useTimelineStore } from '@/store/timelineStore'
 import { useEditorReadOnly } from '@/hooks/useEditorReadOnly'
 import type { DamageEvent, TempMitigation, TempMitigationType } from '@/types/timeline'
@@ -49,11 +49,12 @@ export default function TempMitigationSection({ event }: TempMitigationSectionPr
 
   const handleAdd = () => {
     const trimmed = name.trim()
+    if (!trimmed || value.trim() === '') return
     const num = Number(value)
-    if (!trimmed || !Number.isFinite(num)) return
+    if (!Number.isFinite(num)) return
     const clamped =
       type === 'percent' ? Math.min(100, Math.max(0, num)) : Math.max(0, Math.round(num))
-    const item: TempMitigation = { id: nanoid(), name: trimmed, type, value: clamped }
+    const item: TempMitigation = { id: generateObjectId(), name: trimmed, type, value: clamped }
     updateDamageEvent(event.id, { tempMitigations: [...items, item] })
     resetForm()
     setDialogOpen(false)
@@ -92,7 +93,7 @@ export default function TempMitigationSection({ event }: TempMitigationSectionPr
               <button
                 onClick={() => handleDelete(t.id)}
                 className="p-1 hover:bg-destructive/10 hover:text-destructive rounded transition-colors"
-                aria-label="删除"
+                aria-label={`删除 ${t.name}`}
               >
                 <Trash2 className="w-3.5 h-3.5" />
               </button>
@@ -101,7 +102,13 @@ export default function TempMitigationSection({ event }: TempMitigationSectionPr
         </div>
       )}
 
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+      <Dialog
+        open={dialogOpen}
+        onOpenChange={open => {
+          if (!open) resetForm()
+          setDialogOpen(open)
+        }}
+      >
         <DialogContent className="max-w-sm">
           <DialogHeader>
             <DialogTitle>添加临时减伤</DialogTitle>
@@ -133,6 +140,9 @@ export default function TempMitigationSection({ event }: TempMitigationSectionPr
               </label>
               <Input
                 type="number"
+                min={0}
+                max={type === 'percent' ? 100 : undefined}
+                step={1}
                 value={value}
                 onChange={e => setValue(e.target.value)}
                 placeholder={type === 'percent' ? '如 20' : '如 30000'}

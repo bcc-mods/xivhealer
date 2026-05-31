@@ -117,6 +117,16 @@ describe('granular mutators', () => {
     yRemoveDamageEvent(doc, 'd1')
     expect(projectTimeline(doc).damageEvents).toHaveLength(0)
   })
+
+  it('yUpdateDamageEvent tempMitigations round-trip:数组原样写入并投影回来', () => {
+    const doc = buildYDoc(sample)
+    const tempMitigations = [{ id: 'tm1', name: '临时盾', type: 'shield' as const, value: 30000 }]
+    yUpdateDamageEvent(doc, 'd1', { tempMitigations })
+    const d1 = projectTimeline(doc).damageEvents.find(e => e.id === 'd1')!
+    expect(d1.tempMitigations).toEqual([
+      { id: 'tm1', name: '临时盾', type: 'shield', value: 30000 },
+    ])
+  })
 })
 
 describe('projectTimeline 引用保持', () => {

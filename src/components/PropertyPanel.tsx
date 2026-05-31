@@ -12,6 +12,7 @@ import { getStatusById } from '@/utils/statusRegistry'
 import { getStatusIconUrl, getStatusName } from '@/utils/statusIconUtils'
 import { Trash2, TriangleAlert, Skull, HelpCircle } from 'lucide-react'
 import PlayerDamageDetails from './PlayerDamageDetails'
+import TempMitigationSection from './TempMitigationSection'
 import JobIcon from './JobIcon'
 import { getJobName } from '@/data/jobs'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
@@ -791,6 +792,9 @@ export default function PropertyPanel() {
                 )}
           </div>
         )}
+
+        {/* 临时减伤（仅编辑模式；组件内部对 isReadOnly 返回 null） */}
+        {!timeline.isReplayMode && result && <TempMitigationSection event={event} />}
 
         {/* Player Damage Details (回放模式) */}
         {timeline.isReplayMode && event.playerDamageDetails && (

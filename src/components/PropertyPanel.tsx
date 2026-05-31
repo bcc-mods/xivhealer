@@ -40,6 +40,7 @@ interface BranchViewData {
   mitigationPercentage: number
   appliedStatuses: MitigationStatus[]
   referenceMaxHP?: number
+  candidateDamage?: number
 }
 
 export default function PropertyPanel() {
@@ -255,13 +256,6 @@ export default function PropertyPanel() {
         ? Math.max(0, originalDamage - (hpSnap.segOriginalMax ?? 0))
         : originalDamage
     const maxHP = branch.referenceMaxHP || 0
-    // sum 实例级 remainingBarrier；与 calculator Phase 3 口径一致，覆盖
-    // meta.type='multiplier' 但被 onBeforeShield 注入 barrier 的场景（如死斗）
-    const shieldAvailable = (branch.appliedStatuses || []).reduce(
-      (sum, s) => sum + (s.remainingBarrier ?? 0),
-      0
-    )
-
     let finalDamageScaled: number
     let shieldAbsorb: number
     let pctMitigation: number
@@ -276,11 +270,13 @@ export default function PropertyPanel() {
       finalDamageScaled = preClampDealt
       overkill = hpSnap.overkill ?? 0
     } else {
-      // 事件级原始口径（与改造前一致）
+      // 事件级口径：用 candidateDamage（盾前伤害）切分盾 / 百分比，使真实盾与临时盾都正确归类。
+      // candidate − final = 全部盾吸收量；total − candidate = 全部百分比减免量。
       finalDamageScaled = branch.finalDamage
-      shieldAbsorb = shieldAvailable
-      pctMitigation = Math.max(0, total - finalDamageScaled - shieldAbsorb)
       overkill = hpSnap?.overkill ?? (maxHP > 0 ? Math.max(0, finalDamageScaled - maxHP) : 0)
+      const candidate = branch.candidateDamage ?? finalDamageScaled
+      shieldAbsorb = Math.max(0, candidate - finalDamageScaled)
+      pctMitigation = Math.max(0, total - candidate)
     }
     const effectiveDamage = finalDamageScaled - overkill
 
@@ -712,6 +708,7 @@ export default function PropertyPanel() {
                       mitigationPercentage: v.mitigationPercentage,
                       appliedStatuses: v.appliedStatuses,
                       referenceMaxHP: v.referenceMaxHP,
+                      candidateDamage: v.candidateDamage,
                     }
                     return (
                       <div key={v.playerId} className="border rounded-lg p-3 space-y-2 bg-card">
@@ -738,6 +735,7 @@ export default function PropertyPanel() {
                     mitigationPercentage: selected.mitigationPercentage,
                     appliedStatuses: selected.appliedStatuses,
                     referenceMaxHP: selected.referenceMaxHP,
+                    candidateDamage: selected.candidateDamage,
                   }
 
                   return (
@@ -786,6 +784,7 @@ export default function PropertyPanel() {
                     mitigationPercentage: result.mitigationPercentage,
                     appliedStatuses: result.appliedStatuses,
                     referenceMaxHP: result.referenceMaxHP,
+                    candidateDamage: result.candidateDamage,
                   },
                   event.damageType || 'physical',
                   result.originalDamage

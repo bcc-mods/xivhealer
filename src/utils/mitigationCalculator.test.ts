@@ -955,6 +955,41 @@ describe('MitigationCalculator', () => {
       const result = calculator.calculate(event, basePartyState)
       expect(result.finalDamage).toBe(0)
     })
+
+    it('临时盾在真实盾之后减算，且不改变真实盾的 remainingBarrier 消耗量', () => {
+      // 真实盾：statusId 297（鼓舞，type='absorbed'，isTankOnly=false，适用于 aoe 事件）
+      // barrier = 30000；伤害 = 100000
+      // 预期：真实盾先吸收 30000 → playerDamage = 70000；临时盾再吸收 20000 → finalDamage = 50000
+      const partyState: PartyState = {
+        ...basePartyState,
+        statuses: [
+          {
+            instanceId: 'real-shield-297',
+            statusId: 297,
+            startTime: 0,
+            endTime: 30,
+            remainingBarrier: 30000,
+            removeOnBarrierBreak: true,
+          },
+        ],
+      }
+      const event: DamageEvent = {
+        ...makeEvent(100000, 10, 'magical', 'aoe'),
+        tempMitigations: [{ id: 'tm-shield', name: '临时盾', type: 'shield', value: 20000 }],
+      }
+      const result = calculator.calculate(event, partyState)
+
+      // candidateDamage 在盾前，不受任何盾（真实或临时）影响
+      expect(result.candidateDamage).toBe(100000)
+      // 真实盾 30000 + 临时盾 20000
+      expect(result.finalDamage).toBe(50000)
+      // 只有真实盾进 appliedStatuses；临时盾不进
+      expect(result.appliedStatuses).toHaveLength(1)
+      expect(result.appliedStatuses[0].instanceId).toBe('real-shield-297')
+      // 真实盾 barrier 被打穿至 0（removeOnBarrierBreak=true），从 state 中移除
+      // 这确认了真实盾消耗了且仅消耗了其自身的 30000，临时盾没有改变其消耗量
+      expect(result.updatedPartyState!.statuses).toHaveLength(0)
+    })
   })
 })
 

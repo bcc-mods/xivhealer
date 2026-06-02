@@ -44,6 +44,18 @@ export interface ResourceEffect {
    * compute 层实现必须忽略 delta >= 0 的 required 字段（即不因产出事件的 required 触发任何检查）。
    */
   required?: boolean
+  /**
+   * 仅对 delta < 0 有意义：当该 cast 时刻指定 status（statusId）激活时，本次消耗被豁免——
+   * deriveResourceEvents 不为其派生消耗事件（这一发免费），既不扣量也不参与耗尽校验。
+   *
+   * 仅在 deriveResourceEvents 传入 statusTimelineByPlayer 时生效；未传入（如纯单元测试 / 不关心
+   * 状态的调用方）则永不豁免，行为与不声明本字段一致。
+   *
+   * 激活判定用「闭上界」：消耗掉该 status 的那一发 cast 自身（其状态区间 `to` 恰好截断在本 cast
+   * 时刻）也算激活而被豁免；后续 cast 因区间已收束则正常扣量。配合「消耗该 status 的 executor」
+   * 即可得到精确的单技能豁免语义（例：秘策 1896 只豁免下一发不屈不挠之策）。
+   */
+  suppressedByStatus?: number
 }
 
 /** 从 castEvent 派生出的资源事件（不持久化） */

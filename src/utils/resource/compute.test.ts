@@ -85,6 +85,90 @@ describe('deriveResourceEvents', () => {
   })
 })
 
+describe('deriveResourceEvents — suppressedByStatus 条件消耗', () => {
+  // 模拟不屈不挠之策(3583)：双门 __cd__:3583（始终扣）+ sch:aetherflow（秘策 1896 激活时豁免）
+  const indom = makeAction({
+    id: 3583,
+    cooldown: 30,
+    resourceEffects: [
+      { resourceId: '__cd__:3583', delta: -1, required: true },
+      { resourceId: 'sch:aetherflow', delta: -1, suppressedByStatus: 1896 },
+    ],
+  })
+  const actions = new Map([[3583, indom]])
+
+  function timelineWith(intervals: Array<{ from: number; to: number }>) {
+    const byStatus = new Map<number, import('@/types/status').StatusInterval[]>()
+    byStatus.set(
+      1896,
+      intervals.map(i => ({
+        from: i.from,
+        to: i.to,
+        stacks: 1,
+        sourcePlayerId: 10,
+        sourceCastEventId: 'src',
+      }))
+    )
+    return new Map([[10, byStatus]])
+  }
+
+  it('秘策激活 → 跳过以太超流消耗，但 __cd__ 仍扣', () => {
+    const events = deriveResourceEvents(
+      [makeCast({ id: 'c1', actionId: 3583, timestamp: 50 })],
+      actions,
+      timelineWith([{ from: 45, to: 60 }])
+    )
+    expect(events.has('10:sch:aetherflow')).toBe(false)
+    expect(events.get('10:__cd__:3583')?.[0].delta).toBe(-1)
+  })
+
+  it('秘策未激活 → 正常扣以太超流', () => {
+    const events = deriveResourceEvents(
+      [makeCast({ id: 'c1', actionId: 3583, timestamp: 100 })],
+      actions,
+      timelineWith([{ from: 45, to: 60 }])
+    )
+    expect(events.get('10:sch:aetherflow')?.[0].delta).toBe(-1)
+  })
+
+  it('不传 statusTimelineByPlayer → 永不豁免（向后兼容）', () => {
+    const events = deriveResourceEvents(
+      [makeCast({ id: 'c1', actionId: 3583, timestamp: 50 })],
+      actions
+    )
+    expect(events.get('10:sch:aetherflow')?.[0].delta).toBe(-1)
+  })
+
+  it('闭上界：消耗秘策的那一发自身（区间 to 截断在本 cast）也被豁免', () => {
+    // executor 在 t=50 消耗秘策 → 区间收束为 [45, 50]；本 cast @50 应判激活而豁免
+    const events = deriveResourceEvents(
+      [makeCast({ id: 'c1', actionId: 3583, timestamp: 50 })],
+      actions,
+      timelineWith([{ from: 45, to: 50 }])
+    )
+    expect(events.has('10:sch:aetherflow')).toBe(false)
+  })
+
+  it('区间收束后的后续 cast（t>to）正常扣量', () => {
+    // 第一发 @50 消耗秘策（区间 [45,50]）；第二发 @55 看不到秘策 → 扣以太超流
+    const events = deriveResourceEvents(
+      [makeCast({ id: 'c2', actionId: 3583, timestamp: 55 })],
+      actions,
+      timelineWith([{ from: 45, to: 50 }])
+    )
+    expect(events.get('10:sch:aetherflow')?.[0].delta).toBe(-1)
+  })
+
+  it('豁免按 playerId 隔离：别的玩家秘策不影响本玩家', () => {
+    const events = deriveResourceEvents(
+      [makeCast({ id: 'c1', actionId: 3583, timestamp: 50, playerId: 20 })],
+      actions,
+      timelineWith([{ from: 45, to: 60 }]) // 仅 player 10 有秘策
+    )
+    expect(events.get('20:sch:aetherflow')?.[0].delta).toBe(-1)
+  })
+})
+
 function makeRe(partial: {
   timestamp: number
   delta: number

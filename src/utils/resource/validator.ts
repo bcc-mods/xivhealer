@@ -7,21 +7,24 @@
 import type { MitigationAction } from '@/types/mitigation'
 import type { CastEvent } from '@/types/timeline'
 import type { ResourceDefinition, ResourceExhaustion } from '@/types/resource'
+import type { StatusTimelineByPlayer } from '@/utils/placement/types'
 import { computeResourceTrace, deriveResourceEvents, syntheticCdDef } from './compute'
 
 /**
  * 返回所有因资源不足被判非法的 cast。
  *
  * @param excludeId 拖拽预览：排除正被拖动的 cast 重算。
+ * @param statusTimelineByPlayer 供 `suppressedByStatus` 条件消耗判定；省略则不豁免。
  */
 export function findResourceExhaustedCasts(
   castEvents: CastEvent[],
   actions: Map<number, MitigationAction>,
   registry: Record<string, ResourceDefinition>,
-  excludeId?: string
+  excludeId?: string,
+  statusTimelineByPlayer?: StatusTimelineByPlayer
 ): ResourceExhaustion[] {
   const filteredCasts = excludeId ? castEvents.filter(ce => ce.id !== excludeId) : castEvents
-  const grouped = deriveResourceEvents(filteredCasts, actions)
+  const grouped = deriveResourceEvents(filteredCasts, actions, statusTimelineByPlayer)
   const exhaustions: ResourceExhaustion[] = []
 
   for (const [resourceKey, events] of grouped.entries()) {
@@ -74,7 +77,8 @@ export function probeResourceUnmetMessage(
   timestamp: number,
   existingCastEvents: CastEvent[],
   actions: Map<number, MitigationAction>,
-  registry: Record<string, ResourceDefinition>
+  registry: Record<string, ResourceDefinition>,
+  statusTimelineByPlayer?: StatusTimelineByPlayer
 ): string | null {
   if (!action.resourceEffects?.length) return null
   const probeId = '__probe__'
@@ -85,7 +89,13 @@ export function probeResourceUnmetMessage(
     playerId,
   } as CastEvent
   const merged = [...existingCastEvents, probe].sort((a, b) => a.timestamp - b.timestamp)
-  const exhausted = findResourceExhaustedCasts(merged, actions, registry)
+  const exhausted = findResourceExhaustedCasts(
+    merged,
+    actions,
+    registry,
+    undefined,
+    statusTimelineByPlayer
+  )
   for (const ex of exhausted) {
     if (ex.castEventId !== probeId) continue
     const def = registry[ex.resourceId]

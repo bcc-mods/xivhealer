@@ -550,6 +550,11 @@ export const MITIGATION_DATA: MitigationDataSource = {
         }
         return partyState
       },
+      // 双门 gating：__cd__:16534（自身 2s GCD 级重置，排第一供蓝条取值）+ whm:lily（百合池，-1）。
+      resourceEffects: [
+        { resourceId: '__cd__:16534', delta: -1, required: true },
+        { resourceId: 'whm:lily', delta: -1 },
+      ],
       statDataEntries: [{ type: 'heal', key: 16534 }],
     },
     {
@@ -703,6 +708,12 @@ export const MITIGATION_DATA: MitigationDataSource = {
         const partyState = createBuffExecutor(299, 18)(ctx)
         return createRegenExecutor(1944, 15)({ ...ctx, partyState })
       },
+      // 双门 gating：__cd__:188（自身 30s 重置，显式声明=保留合成池语义，蓝条取首个消费者故排第一）
+      // + sch:aetherflow（共享以太超流池，-1）。野战不与秘策交互，始终扣 1 档。
+      resourceEffects: [
+        { resourceId: '__cd__:188', delta: -1, required: true },
+        { resourceId: 'sch:aetherflow', delta: -1 },
+      ],
       statDataEntries: [{ type: 'heal', key: 1001944 }],
     },
     {
@@ -715,13 +726,22 @@ export const MITIGATION_DATA: MitigationDataSource = {
       cooldown: 30,
       executor: (ctx: ActionExecutionContext) => {
         const recitationId = 1896 // 秘策
-        const hasRecitation = ctx.partyState.statuses.some(s => s.statusId === recitationId)
+        const recitation = ctx.partyState.statuses.find(s => s.statusId === recitationId)
+        const hasRecitation = !!recitation
         const baseAmount = hasRecitation
           ? (ctx.statistics?.critHealByAbility[3583] ?? 10000)
           : (ctx.statistics?.healByAbility[3583] ?? 10000)
 
+        // 秘策使本次不屈必暴击且不消耗以太超流；同时消耗掉秘策——移除其状态实例，使状态区间
+        // 在此 cast 处收束（to=本 cast 时刻）。资源派生层据此（suppressedByStatus + 闭上界判定）
+        // 只豁免这一发的以太超流消耗，后续不屈看不到秘策则正常扣档。
+        const partyState =
+          hasRecitation && recitation
+            ? removeStatus(ctx.partyState, recitation.instanceId)
+            : ctx.partyState
+
         return applyDirectHeal(
-          ctx.partyState,
+          partyState,
           baseAmount,
           {
             castEventId: ctx.castEventId ?? '',
@@ -732,6 +752,12 @@ export const MITIGATION_DATA: MitigationDataSource = {
           ctx.recordHeal
         )
       },
+      // 双门 gating：__cd__:3583（自身 30s 重置，排第一供蓝条取值）+ sch:aetherflow（共享以太超流，-1）。
+      // 以太超流消费者带 suppressedByStatus: 1896——秘策激活时这一发免费（仍走 30s CD）。
+      resourceEffects: [
+        { resourceId: '__cd__:3583', delta: -1, required: true },
+        { resourceId: 'sch:aetherflow', delta: -1, suppressedByStatus: 1896 },
+      ],
       statDataEntries: [
         { type: 'heal', key: 3583 },
         { type: 'critHeal', key: 3583 },
@@ -749,6 +775,9 @@ export const MITIGATION_DATA: MitigationDataSource = {
       duration: 30,
       cooldown: 180,
       executor: createBuffExecutor(791, 30),
+      // 纯产出：+3 以太超流（compute 层 clamp 到 max=3）。无消费者 → 仍合成 __cd__:3587
+      // 保留自身 180s CD gating。
+      resourceEffects: [{ resourceId: 'sch:aetherflow', delta: 3 }],
     },
     {
       id: 16537,

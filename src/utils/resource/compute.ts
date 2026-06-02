@@ -12,6 +12,25 @@ import type {
   ResourceEvent,
   ResourceSnapshot,
 } from '@/types/resource'
+import { TIME_EPS, type StatusTimelineByPlayer } from '@/utils/placement/types'
+
+/**
+ * 判断 (playerId, statusId) 在时刻 t 是否激活。
+ *
+ * 闭上界：消耗掉该 status 的那一发 cast 自身（其状态区间 `to` 恰好截断在 t）也判为激活，
+ * 这样 ResourceEffect.suppressedByStatus 能豁免「消耗该 status 的本 cast」；区间已收束后的
+ * 后续 cast（t > to）则判未激活、正常扣量。两端各放 TIME_EPS 吸收浮点误差。
+ */
+function isStatusActiveAt(
+  timeline: StatusTimelineByPlayer,
+  playerId: number,
+  statusId: number,
+  t: number
+): boolean {
+  const intervals = timeline.get(playerId)?.get(statusId)
+  if (!intervals) return false
+  return intervals.some(iv => iv.from - TIME_EPS <= t && t <= iv.to + TIME_EPS)
+}
 
 /**
  * 判断 action 是否声明了消费者（delta<0）。没有消费者 → 合成 __cd__:${id}。
@@ -43,16 +62,29 @@ export function effectsForAction(action: MitigationAction): ResourceEffect[] {
  *
  * - 对 resourceEffects 中无 `delta < 0` 的 action（无声明 / 只产出）：合成 `__cd__:${id}` 消耗事件
  * - ResourceEffect.required 未声明默认 true；派生到 ResourceEvent.required
+ * - 传入 statusTimelineByPlayer 时，带 `suppressedByStatus` 的消费者在该 status 激活的 cast 上被豁免
+ *   （不派生该消耗事件）；不传则永不豁免
  */
 export function deriveResourceEvents(
   castEvents: CastEvent[],
-  actions: Map<number, MitigationAction>
+  actions: Map<number, MitigationAction>,
+  statusTimelineByPlayer?: StatusTimelineByPlayer
 ): Map<string, ResourceEvent[]> {
   const grouped = new Map<string, ResourceEvent[]>()
   castEvents.forEach((ce, orderIndex) => {
     const action = actions.get(ce.actionId)
     if (!action) return
     for (const eff of effectsForAction(action)) {
+      // 条件消耗：声明了 suppressedByStatus 的消费者，若该 cast 时刻该 status 激活则跳过本次消耗。
+      // 仅在传入 statusTimelineByPlayer 时生效；未传入则永不豁免（向后兼容）。
+      if (
+        eff.delta < 0 &&
+        eff.suppressedByStatus != null &&
+        statusTimelineByPlayer &&
+        isStatusActiveAt(statusTimelineByPlayer, ce.playerId, eff.suppressedByStatus, ce.timestamp)
+      ) {
+        continue
+      }
       const resourceKey = `${ce.playerId}:${eff.resourceId}`
       const ev: ResourceEvent = {
         resourceKey,

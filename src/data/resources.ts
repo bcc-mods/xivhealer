@@ -23,6 +23,21 @@ export const RESOURCE_REGISTRY: Record<string, ResourceDefinition> = {
     // 若 placement 规则变更，需同步评估 initial 值的合理性。
     regen: { interval: 30, amount: 1 },
   },
+  'sch:aetherflow': {
+    id: 'sch:aetherflow',
+    name: '以太超流',
+    job: 'SCH',
+    initial: 3, // 开场满档（等效真实学者起手以太超流可用）
+    max: 3,
+    // 「每分钟回 3 档」：每次消耗后 60s 一次性补 3（封顶 3）。注意这套 regen 是「消耗驱动」而非
+    // 从 t=0 固定节拍——initial=3 确保开场即可用、用掉后 60s 回满。
+    //
+    // 与 consolation/oblation 不同：野战治疗阵(188)/不屈不挠之策(3583) 还各有自身 30s 重置，
+    // 该池 regen(60s) 并不等于这俩技能的 CD。故这两个技能在 mitigationActions.ts 里**同时**声明了
+    // 自身 __cd__ 单充能池消费者（保留 30s 门）和本池消费者（共享 3 档），形成双门 gating。
+    regen: { interval: 60, amount: 3 },
+    unmetMessage: '以太超流档数不足',
+  },
   'drk:oblation': {
     id: 'drk:oblation',
     name: '献奉充能',
@@ -32,6 +47,18 @@ export const RESOURCE_REGISTRY: Record<string, ResourceDefinition> = {
     // regen.interval 与 mitigationActions.ts 中献奉 (25754) 的 cooldown 保持一致（后者含消费者时
     // 仅信息性，两者改动需同步）。
     regen: { interval: 60, amount: 1 },
+  },
+  'whm:lily': {
+    id: 'whm:lily',
+    name: '治疗百合',
+    job: 'WHM',
+    initial: 3, // 开场满档
+    max: 3,
+    // 「20s 回 1 档」。注意这套 regen 是「消耗驱动」（每次消耗后 20s 补 1），非真实游戏的自由计时；
+    // initial=3 保证开场满、用掉后 20s 回。狂喜之心(16534) 另有自身 2s CD（GCD 级），故在
+    // mitigationActions.ts 里同时声明 __cd__ 与本池消费者，形成双门 gating。
+    regen: { interval: 20, amount: 1 },
+    unmetMessage: '百合档数不足',
   },
 }
 

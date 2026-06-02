@@ -42,7 +42,7 @@ export function createPlacementEngine(input: PlacementEngineInput): PlacementEng
     statusTimelineByPlayer: defaultTimeline,
     removalTimelinesByExcludeId,
   } = input
-  const resourceEventsByKey = deriveResourceEvents(castEvents, actions)
+  const resourceEventsByKey = deriveResourceEvents(castEvents, actions, defaultTimeline)
 
   function effectiveCastEvents(excludeId?: string): CastEvent[] {
     return excludeId ? castEvents.filter(e => e.id !== excludeId) : castEvents
@@ -105,7 +105,8 @@ export function createPlacementEngine(input: PlacementEngineInput): PlacementEng
     const effectiveResourceEvents = excludeId
       ? deriveResourceEvents(
           castEvents.filter(e => e.id !== excludeId),
-          actions
+          actions,
+          timelineExcluding(excludeId)
         )
       : resourceEventsByKey
     const resourceIntervals = resourceLegalIntervals(
@@ -224,7 +225,8 @@ export function createPlacementEngine(input: PlacementEngineInput): PlacementEng
       t,
       effectiveCastEvents(excludeId),
       actions,
-      RESOURCE_REGISTRY
+      RESOURCE_REGISTRY,
+      excludeId ? timelineExcluding(excludeId) : defaultTimeline
     )
   }
 
@@ -271,12 +273,13 @@ export function createPlacementEngine(input: PlacementEngineInput): PlacementEng
       if (!ok) placementLost.set(castEvent.id, true)
     }
 
-    // 2. resource 层失效
+    // 2. resource 层失效（复用上面的 placementTimeline 做 suppressedByStatus 条件消耗判定）
     const resourceExhausted = findResourceExhaustedCasts(
       castEvents,
       actions,
       RESOURCE_REGISTRY,
-      removeCastEventId
+      removeCastEventId,
+      placementTimeline
     )
     const exhaustedMap = new Map<string, string>()
     for (const ex of resourceExhausted) {

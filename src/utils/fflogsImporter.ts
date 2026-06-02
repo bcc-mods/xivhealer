@@ -17,13 +17,19 @@ import { SOUMA_SYNC_RULES } from '@/data/soumaSyncRules'
 import { MITIGATION_DATA } from '@/data/mitigationActions'
 import { getStatusById } from '@/utils/statusRegistry'
 import actionChineseRaw from '@ff14-overlay/resources/generated/actionChinese.json'
+import actionExtraRaw from '@/data/action.json'
 import { JOB_MAP } from '@/data/jobMap'
 import { getTankJobs, getJobRole, type Job } from '@/data/jobs'
 import { calculatePercentile } from './stats'
 import { classifyPartialAOE } from './partialAoeClassifier'
 import { TANK_BUSTER_ACTION_IDS, AUTO_ATTACK_ACTION_IDS } from '@/data/actionOverride'
 
-const actionChinese: Record<string, string> = actionChineseRaw
+// actionChinese.json 为上游全量映射；action.json 为本地补充的额外 actionId → 中文名
+// （如 RSV 占位 id），后者覆盖前者以便就近修正翻译
+const actionChinese: Record<string, string> = {
+  ...actionChineseRaw,
+  ...actionExtraRaw,
+}
 
 /**
  * 普通攻击名称匹配：boss 的 auto attack 在各语言 FFLogs 服务器下的统一命名

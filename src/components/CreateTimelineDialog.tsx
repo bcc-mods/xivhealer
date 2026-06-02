@@ -26,6 +26,16 @@ import { RAID_TIERS } from '@/data/raidEncounters'
 import { track } from '@/utils/analytics'
 import { fetchEncounterTemplate, type EncounterTemplateResponse } from '@/api/encounterTemplate'
 
+// 妖星乱舞绝境战置顶展示，其余副本保持原有顺序
+const PRIORITY_ENCOUNTER_ID = 1085
+const VISIBLE_TIERS = [...RAID_TIERS]
+  .filter(tier => !tier.comingSoon)
+  .sort((a, b) => {
+    const rank = (tier: (typeof RAID_TIERS)[number]) =>
+      tier.encounters.some(e => e.id === PRIORITY_ENCOUNTER_ID) ? 0 : 1
+    return rank(a) - rank(b)
+  })
+
 interface CreateTimelineDialogProps {
   open: boolean
   onClose: () => void
@@ -38,7 +48,9 @@ export default function CreateTimelineDialog({
   onCreated,
 }: CreateTimelineDialogProps) {
   const [name, setName] = useState('')
-  const [encounterId, setEncounterId] = useState(RAID_TIERS[0]?.encounters[0]?.id.toString() || '')
+  const [encounterId, setEncounterId] = useState(
+    VISIBLE_TIERS[0]?.encounters[0]?.id.toString() || ''
+  )
   const queryClient = useQueryClient()
 
   // 对话框打开或副本切换时预取模板
@@ -122,7 +134,7 @@ export default function CreateTimelineDialog({
                 <SelectValue placeholder="选择副本" />
               </SelectTrigger>
               <SelectContent>
-                {RAID_TIERS.filter(tier => !tier.comingSoon).map(tier => (
+                {VISIBLE_TIERS.map(tier => (
                   <SelectGroup key={tier.zone}>
                     <SelectLabel>
                       {tier.name} ({tier.patch})

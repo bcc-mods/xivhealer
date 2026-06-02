@@ -252,7 +252,7 @@ export class FFLogsClientV2 {
                 id
               }
             }
-            masterData {
+            masterData(translate: false) {
               abilities {
                 gameID
                 icon
@@ -474,6 +474,7 @@ export class FFLogsClientV2 {
               endTime: $endTime
               dataType: $dataType
               hostilityType: $hostilityType
+              translate: false
               includeResources: $includeResources
               limit: $limit
             ) {

@@ -23,6 +23,9 @@ export interface RaidTier {
   encounters: RaidEncounter[]
   // 未发布占位：Top100 面板显示"敬请期待"，下拉/导入等实际入口应过滤掉
   comingSoon?: boolean
+  // 进度战特殊渲染：填入 mogtalk 进度榜单链接。存在时 Top100 面板渲染进度面板
+  // （跑马灯横条 + 榜单链接 + 进度 template 卡片）而非常规排行表
+  mogtalkUrl?: string
 }
 
 export const RAID_TIERS: RaidTier[] = [
@@ -48,8 +51,8 @@ export const RAID_TIERS: RaidTier[] = [
     name: '妖星乱舞绝境战',
     zone: 73,
     patch: '7.5',
-    encounters: [{ id: 1085, name: '妖星乱舞绝境战', shortName: '', gameZoneId: 0 }],
-    comingSoon: true,
+    encounters: [{ id: 1085, name: '妖星乱舞绝境战', shortName: 'DMU', gameZoneId: 0 }],
+    mogtalkUrl: 'https://mogtalk.com/leaderboard/5N0D8KmZNT90RVEmnwAk',
   },
 ]
 

@@ -286,9 +286,14 @@ describe('handleGetEncounterTemplate', () => {
     const kv = createMockKV()
     const res = await handleGetEncounterTemplate(9999, kv)
     expect(res.status).toBe(200)
-    const body = (await res.json()) as { events: unknown[]; updatedAt: string | null }
+    const body = (await res.json()) as {
+      events: unknown[]
+      updatedAt: string | null
+      templateSourceDurationMs: number | null
+    }
     expect(body.events).toEqual([])
     expect(body.updatedAt).toBeNull()
+    expect(body.templateSourceDurationMs).toBeNull()
   })
 
   it('KV 有数据 → 返回 events + updatedAt', async () => {
@@ -316,10 +321,12 @@ describe('handleGetEncounterTemplate', () => {
     const body = (await res.json()) as {
       events: Array<{ id: string }>
       updatedAt: string | null
+      templateSourceDurationMs: number | null
     }
     expect(body.events).toHaveLength(1)
     expect(body.events[0].id).toBe('e1')
     expect(body.updatedAt).toBe('2026-04-14T00:00:00.000Z')
+    expect(body.templateSourceDurationMs).toBe(500_000)
   })
 })
 

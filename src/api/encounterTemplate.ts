@@ -11,6 +11,8 @@ import type { DamageEvent } from '@/types/timeline'
 export interface EncounterTemplateResponse {
   events: DamageEvent[]
   updatedAt: string | null
+  /** 模板来源战斗的时长（毫秒），即当前进度最长那次；无模板时为 null */
+  templateSourceDurationMs: number | null
 }
 
 export async function fetchEncounterTemplate(

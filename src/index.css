@@ -187,6 +187,29 @@
     }
   }
 
+  /* 滚动跑马灯：文字无缝循环。轨道内含两份相同内容，整体左移半程（一份宽度）后
+     循环回 0，因两份相同故视觉连续不断。容器需 overflow-hidden + whitespace-nowrap */
+  .marquee-track {
+    display: inline-flex;
+    flex-wrap: nowrap;
+    animation: marquee-loop 32s linear infinite;
+  }
+
+  @keyframes marquee-loop {
+    from {
+      transform: translateX(0);
+    }
+    to {
+      transform: translateX(-50%);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .marquee-track {
+      animation: none;
+    }
+  }
+
   /* 职业图标 Unicode 字符映射 */
   .xiv-class_job_019:before {
     content: '\f019';

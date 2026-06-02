@@ -488,10 +488,18 @@ export async function handleGetEncounterTemplate(
   }
   const data = await kv.get(getEncounterTemplateKVKey(encounterId), 'json')
   if (!data) {
-    return new Response(JSON.stringify({ events: [], updatedAt: null }), { headers })
+    return new Response(
+      JSON.stringify({ events: [], updatedAt: null, templateSourceDurationMs: null }),
+      { headers }
+    )
   }
   const template = data as EncounterTemplate
-  return new Response(JSON.stringify({ events: template.events, updatedAt: template.updatedAt }), {
-    headers,
-  })
+  return new Response(
+    JSON.stringify({
+      events: template.events,
+      updatedAt: template.updatedAt,
+      templateSourceDurationMs: template.templateSourceDurationMs,
+    }),
+    { headers }
+  )
 }

@@ -6,8 +6,18 @@
 
 import { useState, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Clock, RefreshCw, ChevronDown, ChevronRight, Server, Filter, Eraser } from 'lucide-react'
-import { RAID_TIERS, type RaidEncounter } from '@/data/raidEncounters'
+import {
+  Clock,
+  RefreshCw,
+  ChevronDown,
+  ChevronRight,
+  Server,
+  Filter,
+  Eraser,
+  ExternalLink,
+} from 'lucide-react'
+import { RAID_TIERS, type RaidEncounter, type RaidTier } from '@/data/raidEncounters'
+import { useEncounterTemplate } from '@/hooks/useEncounterTemplate'
 import ImportFFLogsDialog from '@/components/ImportFFLogsDialog'
 import JobIcon from '@/components/JobIcon'
 import { JOB_MAP } from '@/data/jobMap'
@@ -66,6 +76,21 @@ function formatDuration(ms: number): string {
 
 function formatAmount(amount: number): string {
   return amount.toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 })
+}
+
+// 进度条满刻度：20 分钟（超过则进度条封顶不溢出，文字仍显示真实时长）
+const PROGRESS_FULL_MS = 20 * 60 * 1000
+
+function formatUpdatedAt(iso: string | null): string {
+  if (!iso) return '-'
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return '-'
+  return d.toLocaleString('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
 }
 
 function buildFFLogsUrl(reportCode: string, fightID: number): string {
@@ -356,6 +381,88 @@ function EncounterTable({
   )
 }
 
+// 进度战面板：用于尚无通关榜单、仍在追进度的副本（如绝境战首周）。
+// 渲染跑马灯横条 + mogtalk 进度榜单链接 + 后端定时任务获取到的"最长进度时间轴"元信息卡片。
+function ProgressEncounterPanel({ tier }: { tier: RaidTier }) {
+  const encounter = tier.encounters[0]
+  const { data, isLoading } = useEncounterTemplate(encounter?.id ?? 0)
+
+  return (
+    <div className="space-y-4">
+      {/* 跑马灯横条（文字无缝循环滚动）。渲染多份铺满容器，位移 -50% 循环无缝 */}
+      <div className="rounded-lg border bg-muted/30 px-4 py-1.5 overflow-hidden whitespace-nowrap">
+        <div className="marquee-track">
+          {Array.from({ length: 8 }).map((_, i) => (
+            <span
+              key={i}
+              className="text-sm text-muted-foreground inline-flex items-center"
+              aria-hidden={i > 0}
+            >
+              🤡 最新进度绝赞更新中 🤡
+              <span className="mx-6 opacity-50">•</span>
+            </span>
+          ))}
+        </div>
+      </div>
+
+      {/* mogtalk 进度榜单链接 */}
+      {tier.mogtalkUrl && (
+        <a
+          href={tier.mogtalkUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={() => track('top100-mogtalk', { encounterId: encounter?.id })}
+          className="flex items-center justify-between gap-3 rounded-lg border px-4 py-3 hover:bg-accent transition-colors"
+        >
+          <div>
+            <div className="font-medium text-sm">MogTalk 进度榜单</div>
+            <div className="text-xs text-muted-foreground">查看全球小队最新进度排名</div>
+          </div>
+          <ExternalLink className="w-4 h-4 text-muted-foreground shrink-0" />
+        </a>
+      )}
+
+      {/* 进度时间轴元信息卡片：无 template 数据时不展示，加载中显示加载态 */}
+      {isLoading && (
+        <div className="rounded-lg border px-4 py-3">
+          <div className="flex items-center gap-2 mb-2">
+            <Clock className="w-4 h-4 text-muted-foreground" />
+            <span className="font-medium text-sm">伤害时间轴更新进度</span>
+          </div>
+          <div className="text-sm text-muted-foreground">加载中...</div>
+        </div>
+      )}
+      {!isLoading && data && data.templateSourceDurationMs != null && (
+        <div className="rounded-lg border px-4 py-3">
+          <div className="flex items-center justify-between gap-2 mb-2">
+            <div className="flex items-center gap-2">
+              <Clock className="w-4 h-4 text-muted-foreground" />
+              <span className="font-medium text-sm">伤害时间轴更新进度</span>
+            </div>
+            <span className="text-xs text-muted-foreground font-mono">
+              更新于 {formatUpdatedAt(data.updatedAt)}
+            </span>
+          </div>
+          <div>
+            <div className="flex items-center justify-between text-xs text-muted-foreground mb-1.5">
+              <span>时长</span>
+              <span className="font-mono">{formatDuration(data.templateSourceDurationMs)}</span>
+            </div>
+            <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden">
+              <div
+                className="h-full rounded-full bg-gradient-to-r from-emerald-400 via-cyan-400 to-blue-500 transition-all"
+                style={{
+                  width: `${Math.min(100, (data.templateSourceDurationMs / PROGRESS_FULL_MS) * 100)}%`,
+                }}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ---- 主组件 ----
 
 export default function Top100Section() {
@@ -476,6 +583,8 @@ export default function Top100Section() {
         <div className="text-center py-12">
           <span className="rainbow-marquee text-2xl font-bold tracking-wider">敬请期待！</span>
         </div>
+      ) : activeTier.mogtalkUrl ? (
+        <ProgressEncounterPanel tier={activeTier} />
       ) : isLoading ? (
         <div className="text-center py-12 text-muted-foreground text-sm">
           <RefreshCw className="w-5 h-5 animate-spin mx-auto mb-2" />

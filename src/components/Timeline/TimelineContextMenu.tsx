@@ -51,6 +51,13 @@ export type ContextMenuState =
       type: 'annotation'
       annotationId: string
     }
+  | {
+      x: number
+      y: number
+      time: number
+      type: 'multiSelection'
+      count: number
+    }
 
 export type DamageEventClipboard = Omit<DamageEvent, 'id' | 'time'> | null
 
@@ -69,6 +76,11 @@ interface TimelineContextMenuProps {
   onAddAnnotation: (time: number, anchor: AnnotationAnchor) => void
   onEditAnnotation: (annotationId: string) => void
   onDeleteAnnotation: (annotationId: string) => void
+  onCopySelection?: () => void
+  onDeleteSelection: () => void
+  /** 粘贴可用性：'checking' | true | false；控制空白菜单粘贴项 */
+  pasteAvailable?: 'checking' | boolean
+  onPasteSelection?: (time: number) => void
 }
 
 export default function TimelineContextMenu({
@@ -86,6 +98,10 @@ export default function TimelineContextMenu({
   onAddAnnotation,
   onEditAnnotation,
   onDeleteAnnotation,
+  onCopySelection,
+  onDeleteSelection,
+  pasteAvailable,
+  onPasteSelection,
 }: TimelineContextMenuProps) {
   if (!menu) return null
 
@@ -118,6 +134,30 @@ export default function TimelineContextMenu({
           </DropdownMenuItem>
         )}
 
+        {menu.type === 'multiSelection' && (
+          <>
+            <DropdownMenuItem
+              onClick={() => {
+                onCopySelection?.()
+                onClose()
+              }}
+            >
+              复制（{menu.count} 项）
+              <DropdownMenuShortcut>{modKey}C</DropdownMenuShortcut>
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              className="text-destructive focus:text-destructive"
+              onClick={() => {
+                onDeleteSelection()
+                onClose()
+              }}
+            >
+              删除（{menu.count} 项）
+              <DropdownMenuShortcut>{deleteKeyLabel}</DropdownMenuShortcut>
+            </DropdownMenuItem>
+          </>
+        )}
+
         {menu.type === 'skillTrackEmpty' && (
           <>
             <DropdownMenuItem
@@ -143,6 +183,18 @@ export default function TimelineContextMenu({
             >
               添加注释
             </DropdownMenuItem>
+            {onPasteSelection && (
+              <DropdownMenuItem
+                disabled={pasteAvailable !== true}
+                onClick={() => {
+                  onPasteSelection(menu.time)
+                  onClose()
+                }}
+              >
+                粘贴{pasteAvailable === 'checking' ? '…' : ''}
+                <DropdownMenuShortcut>{modKey}V</DropdownMenuShortcut>
+              </DropdownMenuItem>
+            )}
           </>
         )}
 
@@ -197,16 +249,29 @@ export default function TimelineContextMenu({
                 <MousePointerClick className="size-3" />
               </DropdownMenuShortcut>
             </DropdownMenuItem>
-            {clipboard && (
+            {onPasteSelection ? (
               <DropdownMenuItem
+                disabled={pasteAvailable !== true}
                 onClick={() => {
-                  onPasteDamageEvent(menu.time)
+                  onPasteSelection(menu.time)
                   onClose()
                 }}
               >
-                粘贴
+                粘贴{pasteAvailable === 'checking' ? '…' : ''}
                 <DropdownMenuShortcut>{modKey}V</DropdownMenuShortcut>
               </DropdownMenuItem>
+            ) : (
+              clipboard && (
+                <DropdownMenuItem
+                  onClick={() => {
+                    onPasteDamageEvent(menu.time)
+                    onClose()
+                  }}
+                >
+                  粘贴
+                  <DropdownMenuShortcut>{modKey}V</DropdownMenuShortcut>
+                </DropdownMenuItem>
+              )
             )}
             <DropdownMenuItem
               onClick={() => {

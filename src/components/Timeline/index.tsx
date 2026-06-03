@@ -29,6 +29,7 @@ import { getStatusById } from '@/utils/statusRegistry'
 import { getStatusName } from '@/utils/statusIconUtils'
 import { getSyncScrollProgress, setSyncScrollProgress } from '@/utils/syncScrollProgress'
 import { generateObjectId } from '@/utils/shortId'
+import { CLIPBOARD_MIME } from '@/utils/timelineClipboard'
 import AddEventDialog from '../AddEventDialog'
 import AnnotationPopover from './AnnotationPopover'
 import TimelineContextMenu from './TimelineContextMenu'
@@ -105,6 +106,7 @@ export default function TimelineCanvas({ width, height }: TimelineCanvasProps) {
   const scrollTopRef = useRef(0)
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
   const [clipboard, setClipboard] = useState<DamageEventClipboard>(null)
+  const [pasteAvailable, setPasteAvailable] = useState<'checking' | boolean>(false)
   const [editingAnnotation, setEditingAnnotation] = useState<{
     annotation: { id: string; text: string; time: number; anchor: AnnotationAnchor } | null
     time: number
@@ -719,6 +721,17 @@ export default function TimelineCanvas({ width, height }: TimelineCanvasProps) {
     [clipboard]
   )
 
+  // 探测系统剪贴板是否含有时间轴数据（用于右键空白菜单显示粘贴项）
+  const probePaste = useCallback(async () => {
+    setPasteAvailable('checking')
+    try {
+      const items = await navigator.clipboard.read()
+      setPasteAvailable(items.some(it => it.types.includes(CLIPBOARD_MIME)))
+    } catch {
+      setPasteAvailable(false)
+    }
+  }, [])
+
   // 撤销 / 重做
   const runUndoRedo = (op: 'undo' | 'redo') => {
     if (op === 'undo') undo()
@@ -1001,6 +1014,26 @@ export default function TimelineCanvas({ width, height }: TimelineCanvasProps) {
       clientY: number,
       time: number
     ) => {
+      // 右键命中多选集合内对象时：显示批量菜单，不把多选塌缩为单选
+      const sel = useTimelineStore.getState()
+      const total =
+        sel.selectedEventIds.length +
+        sel.selectedCastEventIds.length +
+        sel.selectedAnnotationIds.length
+      const inMulti =
+        (payload.type === 'damageEvent' && sel.selectedEventIds.includes(payload.eventId)) ||
+        (payload.type === 'castEvent' && sel.selectedCastEventIds.includes(payload.castEventId)) ||
+        (payload.type === 'annotation' && sel.selectedAnnotationIds.includes(payload.annotationId))
+      if (total > 1 && inMulti) {
+        setContextMenu({ type: 'multiSelection', count: total, x: clientX, y: clientY, time })
+        return
+      }
+
+      // 右键空白轨道时探测系统剪贴板，为粘贴项提供可用性状态
+      if (payload.type === 'damageTrackEmpty' || payload.type === 'skillTrackEmpty') {
+        void probePaste()
+      }
+
       if (payload.type === 'castEvent') {
         selectCastEvent(payload.castEventId)
       } else if (payload.type === 'damageEvent') {
@@ -1009,7 +1042,7 @@ export default function TimelineCanvas({ width, height }: TimelineCanvasProps) {
 
       setContextMenu({ ...payload, x: clientX, y: clientY, time })
     },
-    [selectCastEvent, selectEvent]
+    [selectCastEvent, selectEvent, probePaste]
   )
 
   const handleContextMenuClose = useCallback(() => {
@@ -1786,6 +1819,8 @@ export default function TimelineCanvas({ width, height }: TimelineCanvasProps) {
         onAddAnnotation={handleAddAnnotation}
         onEditAnnotation={handleEditAnnotation}
         onDeleteAnnotation={handleDeleteAnnotation}
+        onDeleteSelection={() => useTimelineStore.getState().bulkDeleteSelection()}
+        pasteAvailable={pasteAvailable}
       />
 
       {/* 注释悬浮查看（pointer-events: none，通过 CSS 变量实时跟随滚动） */}

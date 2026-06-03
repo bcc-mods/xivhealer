@@ -27,6 +27,7 @@ export default function FilterMenu() {
     [...BUILTIN_PRESETS, ...customPresets].find(p => p.id === activeFilterId) ?? BUILTIN_PRESETS[0]
 
   const [menuOpen, setMenuOpen] = useState(false)
+  const [tooltipOpen, setTooltipOpen] = useState(false)
   const [manageOpen, setManageOpen] = useState(false)
 
   const handleChange = (id: string) => {
@@ -38,7 +39,7 @@ export default function FilterMenu() {
   return (
     <>
       <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
-        <Tooltip open={menuOpen ? false : undefined}>
+        <Tooltip open={menuOpen ? false : tooltipOpen} onOpenChange={setTooltipOpen}>
           <TooltipTrigger asChild>
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" size="sm" className="h-7 gap-1.5 px-2">

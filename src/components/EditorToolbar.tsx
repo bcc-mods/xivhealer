@@ -108,7 +108,9 @@ export default function EditorToolbar({
   const [showSoumaDialog, setShowSoumaDialog] = useState(false)
   const [showImportDialog, setShowImportDialog] = useState(false)
   const [viewMenuOpen, setViewMenuOpen] = useState(false)
+  const [viewTooltipOpen, setViewTooltipOpen] = useState(false)
   const [exportMenuOpen, setExportMenuOpen] = useState(false)
+  const [exportTooltipOpen, setExportTooltipOpen] = useState(false)
 
   const canUndo = useTimelineStore(s => s.canUndo)
   const canRedo = useTimelineStore(s => s.canRedo)
@@ -289,7 +291,10 @@ export default function EditorToolbar({
 
             {/* 视图菜单 */}
             <DropdownMenu open={viewMenuOpen} onOpenChange={setViewMenuOpen}>
-              <Tooltip open={viewMenuOpen ? false : undefined}>
+              <Tooltip
+                open={viewMenuOpen ? false : viewTooltipOpen}
+                onOpenChange={setViewTooltipOpen}
+              >
                 <TooltipTrigger asChild>
                   <DropdownMenuTrigger asChild>
                     <Button variant="ghost" size="icon" className="h-7 w-7">
@@ -429,7 +434,10 @@ export default function EditorToolbar({
                   <div className="w-px h-6 bg-border mx-1" />
                 )}
                 <DropdownMenu open={exportMenuOpen} onOpenChange={setExportMenuOpen}>
-                  <Tooltip open={exportMenuOpen ? false : undefined}>
+                  <Tooltip
+                    open={exportMenuOpen ? false : exportTooltipOpen}
+                    onOpenChange={setExportTooltipOpen}
+                  >
                     <TooltipTrigger asChild>
                       <DropdownMenuTrigger asChild>
                         <Button variant="ghost" size="icon" className="h-7 w-7">

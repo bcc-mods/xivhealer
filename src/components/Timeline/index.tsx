@@ -1256,10 +1256,22 @@ export default function TimelineCanvas({ width, height }: TimelineCanvasProps) {
 
   const handleAnnotationContextMenu = useCallback(
     (annotationId: string, clientX: number, clientY: number, time: number) => {
+      const sel = useTimelineStore.getState()
+      const total =
+        sel.selectedEventIds.length +
+        sel.selectedCastEventIds.length +
+        sel.selectedAnnotationIds.length
+      if (total > 1 && sel.selectedAnnotationIds.includes(annotationId)) {
+        // 右键命中多选集合内注释：弹批量菜单（只读不弹），并 return 避免塌缩多选
+        if (!isReadOnly) {
+          setContextMenu({ type: 'multiSelection', count: total, x: clientX, y: clientY, time })
+        }
+        return
+      }
       setPinnedAnnotationId(null)
       setContextMenu({ type: 'annotation', annotationId, x: clientX, y: clientY, time })
     },
-    []
+    [isReadOnly]
   )
 
   const handleEditAnnotation = useCallback(

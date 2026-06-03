@@ -54,6 +54,8 @@ import {
   CROSSHAIR_LINE_POINTS,
 } from './constants'
 import HpCurveTrack from './HpCurveTrack'
+import { useMarqueeSelection } from './useMarqueeSelection'
+import type { MarqueeObject } from './marqueeHitTest'
 import { PeerOverlayFixed, PeerOverlayMain } from './PeerOverlay'
 import { formatTimeWithDecimal } from '@/utils/formatters'
 import { useSkillTracks } from '@/hooks/useSkillTracks'
@@ -162,6 +164,8 @@ export default function TimelineCanvas({ width, height }: TimelineCanvasProps) {
   const lastDragSendRef = useRef(0)
   const minimapRef = useRef<TimelineMinimapHandle | null>(null)
   const scrollbarRef = useRef<VerticalScrollbarHandle | null>(null)
+  // 框选：渲染期写入最新的对象 box 构建函数，pointerup 时读取（避免 stale 闭包）
+  const buildMarqueeObjectsRef = useRef<() => MarqueeObject[]>(() => [])
 
   const {
     timeline,
@@ -186,6 +190,7 @@ export default function TimelineCanvas({ width, height }: TimelineCanvasProps) {
   const { actions } = useMitigationStore()
   const { isDamageTrackCollapsed, toggleDamageTrackCollapsed } = useUIStore()
   const enableHpSimulation = useUIStore(s => s.enableHpSimulation)
+  const canvasTool = useUIStore(s => s.canvasTool)
   const calculationResults = useDamageCalculationResults()
   const removalTimelinesByExcludeId = useRemovalTimelinesByExcludeId()
   const statusTimelineByPlayer = useStatusTimelineByPlayer()
@@ -296,26 +301,39 @@ export default function TimelineCanvas({ width, height }: TimelineCanvasProps) {
     minimapRef.current?.updateViewport(newScrollLeft)
   }, [])
 
+  // 布局常量
+  const timeRulerHeight = 30
+  const skillTrackHeight = 40
+  const labelColumnWidth = 70
+  const minimapHeight = 80 + 16 + 1 // canvas(80) + p-2 padding(16) + border-t(1)
+
+  // 固定区域 Stage：标尺带内拖动让位给框选（infinite-height）；select 模式全局让位。
   useTimelinePanZoom(fixedStageRef, panZoomRefs, {
     enableVerticalScroll: false,
     isReadOnly,
     setScrollLeft,
     setScrollTop,
     onDirectScroll: handleDirectScroll,
+    canvasTool,
+    rulerHeight: timeRulerHeight,
   })
+  // 技能轨道 Stage：容器顶部即轨道区，不含标尺带 → rulerHeight 传 0，仅 select 模式让位。
   useTimelinePanZoom(stageRef, panZoomRefs, {
     enableVerticalScroll: true,
     isReadOnly,
     setScrollLeft,
     setScrollTop,
     onDirectScroll: handleDirectScroll,
+    canvasTool,
+    rulerHeight: 0,
   })
 
-  // 布局常量
-  const timeRulerHeight = 30
-  const skillTrackHeight = 40
-  const labelColumnWidth = 70
-  const minimapHeight = 80 + 16 + 1 // canvas(80) + p-2 padding(16) + border-t(1)
+  // 框选：buildObjects 委托给渲染期写入的 ref，保证用当前滚动/缩放下的屏幕坐标
+  const buildMarqueeObjects = useCallback(() => buildMarqueeObjectsRef.current(), [])
+  const marquee = useMarqueeSelection({
+    rulerHeight: timeRulerHeight,
+    buildObjects: buildMarqueeObjects,
+  })
 
   // 计算布局数据（仅在 timeline/zoomLevel/actions 变化时重新计算）
   const layoutData = useMemo(() => {
@@ -1283,6 +1301,113 @@ export default function TimelineCanvas({ width, height }: TimelineCanvasProps) {
   const hoverBasePos = hoverAnnotation ? getAnnotationBasePos(hoverAnnotation) : null
   const pinnedBasePos = pinnedAnnotation ? getAnnotationBasePos(pinnedAnnotation) : null
 
+  // 框选对象 box 构建（容器屏幕坐标系，origin = timelineContainerRef 左上角）。
+  // 坐标公式与渲染层一致：
+  //   canvasLeft = labelColumnWidth + SCROLLBAR_WIDTH（标签列宽，画布内容从此处开始）
+  //   x = canvasLeft + time*zoomLevel - scrollLeft
+  //   伤害轨/伤害注释 y：固定区，不随垂直滚动（timeRulerHeight 起）
+  //   技能轨/技能注释 y：fixedAreaHeight + trackIndex*skillTrackHeight + ... - scrollTop
+  const canvasLeft = labelColumnWidth + SCROLLBAR_WIDTH
+  const DAMAGE_CARD_WIDTH = 150
+  const DAMAGE_CARD_HEIGHT = 28
+  const CAST_ICON_SIZE = 30
+  const ANNOTATION_BOX = 16
+  buildMarqueeObjectsRef.current = () => {
+    const objs: MarqueeObject[] = []
+    // 伤害事件（固定区，y 不随垂直滚动）
+    for (const event of timeline.damageEvents) {
+      const x0 = canvasLeft + event.time * zoomLevel - clampedScrollLeft
+      const row = damageEventRowMap.get(event.id) ?? 0
+      const y0 = timeRulerHeight + row * LANE_ROW_HEIGHT
+      objs.push({
+        id: event.id,
+        kind: 'damage',
+        x0,
+        x1: x0 + DAMAGE_CARD_WIDTH,
+        y0,
+        y1: y0 + DAMAGE_CARD_HEIGHT,
+      })
+    }
+    // cast 事件（技能区，y 随垂直滚动；trackIndex 按 trackGroup 归到父轨道）
+    for (const ce of timeline.castEvents) {
+      const castAction = actionMap.get(ce.actionId)
+      const castGroupId = castAction?.trackGroup ?? ce.actionId
+      const trackIndex = skillTracks.findIndex(
+        t => t.playerId === ce.playerId && t.actionId === castGroupId
+      )
+      if (trackIndex === -1) continue
+      const x0 = canvasLeft + ce.timestamp * zoomLevel - clampedScrollLeft
+      const trackY = trackIndex * skillTrackHeight + skillTrackHeight / 2
+      const y0 = fixedAreaHeight + trackY - CAST_ICON_SIZE / 2 - clampedScrollTop
+      objs.push({
+        id: ce.id,
+        kind: 'cast',
+        x0,
+        x1: x0 + CAST_ICON_SIZE,
+        y0,
+        y1: y0 + CAST_ICON_SIZE,
+      })
+    }
+    // 注释（按 anchor 区分固定区 / 技能区）
+    for (const annotation of timeline.annotations ?? []) {
+      const x0 = canvasLeft + annotation.time * zoomLevel - clampedScrollLeft
+      if (annotation.anchor.type === 'damageTrack') {
+        const cy = timeRulerHeight + eventTrackHeight - 20
+        objs.push({
+          id: annotation.id,
+          kind: 'annotation',
+          x0,
+          x1: x0 + ANNOTATION_BOX,
+          y0: cy - ANNOTATION_BOX / 2,
+          y1: cy + ANNOTATION_BOX / 2,
+        })
+      } else {
+        const anchor = annotation.anchor
+        const trackIndex = skillTracks.findIndex(
+          t => t.playerId === anchor.playerId && t.actionId === anchor.actionId
+        )
+        if (trackIndex === -1) continue
+        const cy =
+          fixedAreaHeight + trackIndex * skillTrackHeight + skillTrackHeight / 2 - clampedScrollTop
+        objs.push({
+          id: annotation.id,
+          kind: 'annotation',
+          x0,
+          x1: x0 + ANNOTATION_BOX,
+          y0: cy - ANNOTATION_BOX / 2,
+          y1: cy + ANNOTATION_BOX / 2,
+        })
+      }
+    }
+    return objs
+  }
+
+  // 框选指针处理：在 select 模式或落在标尺带内时接管拖动，注册 window move/up。
+  // 坐标换算到容器局部坐标（与 buildObjects / overlay 同一 origin）。
+  const handleMarqueePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return
+    const container = timelineContainerRef.current
+    if (!container) return
+    const rect = container.getBoundingClientRect()
+    const localY = e.clientY - rect.top
+    const inRuler = localY <= timeRulerHeight
+    if (canvasTool !== 'select' && !inRuler) return
+    const localX = e.clientX - rect.left
+    marquee.onPointerDown(localX, localY, e.shiftKey)
+
+    const onMove = (ev: PointerEvent) => {
+      const r = container.getBoundingClientRect()
+      marquee.onPointerMove(ev.clientX - r.left, ev.clientY - r.top)
+    }
+    const onUp = () => {
+      marquee.onPointerUp()
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+  }
+
   return (
     <div
       ref={timelineContainerRef}
@@ -1295,6 +1420,7 @@ export default function TimelineCanvas({ width, height }: TimelineCanvasProps) {
           '--tl-scroll-y': `${clampedScrollTop}px`,
         } as React.CSSProperties
       }
+      onPointerDown={handleMarqueePointerDown}
       onClick={() => {
         if (annotationClickedRef.current) {
           annotationClickedRef.current = false
@@ -1304,6 +1430,19 @@ export default function TimelineCanvas({ width, height }: TimelineCanvasProps) {
         setPinnedAnnotationId(null)
       }}
     >
+      {/* 框选高亮覆盖层（DOM div，非 Konva） */}
+      {marquee.rect && (
+        <div
+          className="pointer-events-none absolute z-20 border border-dashed border-primary bg-primary/10"
+          style={{
+            left: Math.min(marquee.rect.x0, marquee.rect.x1),
+            top: marquee.rect.infinite ? 0 : Math.min(marquee.rect.y0, marquee.rect.y1),
+            width: Math.abs(marquee.rect.x1 - marquee.rect.x0),
+            height: marquee.rect.infinite ? '100%' : Math.abs(marquee.rect.y1 - marquee.rect.y0),
+          }}
+        />
+      )}
+
       {/* 固定顶部区域：时间标尺 + 伤害事件轨道 */}
       <div className="flex flex-shrink-0" style={{ height: fixedAreaHeight }}>
         {/* 左侧固定标签（宽度包含滚动条区域） */}

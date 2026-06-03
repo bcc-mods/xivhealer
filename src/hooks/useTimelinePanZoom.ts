@@ -36,6 +36,10 @@ interface PanZoomOptions {
   setScrollTop: Dispatch<SetStateAction<number>>
   /** 直接更新 Konva 图层位置的回调，绕过 React 渲染 */
   onDirectScroll?: (scrollLeft: number, scrollTop: number) => void
+  /** 当前画布工具：select 模式下让位给框选，不启动平移 */
+  canvasTool?: 'pan' | 'select'
+  /** 时间标尺带高度：指针落在标尺带内（含任意工具）让位给框选 */
+  rulerHeight?: number
 }
 
 export function useTimelinePanZoom(
@@ -43,7 +47,15 @@ export function useTimelinePanZoom(
   refs: PanZoomRefs,
   options: PanZoomOptions
 ) {
-  const { enableVerticalScroll, isReadOnly, setScrollLeft, setScrollTop, onDirectScroll } = options
+  const {
+    enableVerticalScroll,
+    isReadOnly,
+    setScrollLeft,
+    setScrollTop,
+    onDirectScroll,
+    canvasTool = 'pan',
+    rulerHeight = 0,
+  } = options
 
   useEffect(() => {
     const stage = stageRef.current
@@ -90,6 +102,12 @@ export function useTimelinePanZoom(
 
       // 右键不触发拖动
       if (evt.button === 2) return
+
+      // 框选接管：select 工具模式，或指针落在顶部时间标尺带内（任意工具）。
+      // 此时不启动平移，把这些拖动让给 useMarqueeSelection。
+      const containerRect = stage.container().getBoundingClientRect()
+      const localY = evt.clientY - containerRect.top
+      if (canvasTool === 'select' || localY <= rulerHeight) return
 
       // 鼠标按下时立即隐藏悬浮窗
       useTooltipStore.getState().clearTooltip()
@@ -231,5 +249,5 @@ export function useTimelinePanZoom(
     }
     // refs 和 store 方法引用稳定，不需要作为依赖
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stageRef, isReadOnly, enableVerticalScroll])
+  }, [stageRef, isReadOnly, enableVerticalScroll, canvasTool, rulerHeight])
 }

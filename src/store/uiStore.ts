@@ -31,6 +31,8 @@ interface UIState {
   /** 当前正在拖拽的 castEvent.id；非拖拽态为 null。
    *  ephemeral 状态，从 persist 排除。 */
   draggingId: string | null
+  /** 画布工具模式：pan=拖动平移（默认），select=矩形框选 */
+  canvasTool: 'pan' | 'select'
 
   // Actions
   /** 切换网格显示 */
@@ -53,6 +55,8 @@ interface UIState {
   toggleEnableHpSimulation: () => void
   /** 设置当前拖拽的 castEvent.id；停止拖拽传 null */
   setDraggingId: (id: string | null) => void
+  /** 设置画布工具模式 */
+  setCanvasTool: (tool: 'pan' | 'select') => void
 }
 
 function applyTheme(theme: 'light' | 'dark') {
@@ -91,6 +95,7 @@ export const useUIStore = create<UIState>()(
       showOriginalDamage: false,
       enableHpSimulation: true,
       draggingId: null,
+      canvasTool: 'pan',
 
       toggleGrid: () =>
         set(state => ({
@@ -138,6 +143,8 @@ export const useUIStore = create<UIState>()(
         })),
 
       setDraggingId: id => set({ draggingId: id }),
+
+      setCanvasTool: tool => set({ canvasTool: tool }),
     }),
     {
       name: 'ui-store',

@@ -878,4 +878,27 @@ describe('多选 selection', () => {
     useTimelineStore.getState().selectEvent(null)
     expect(useTimelineStore.getState().selectedEventIds).toEqual([])
   })
+
+  it('removeAnnotation 清理 selectedAnnotationIds', async () => {
+    const seedAnn: TimelineContent = {
+      ...baseContent,
+      annotations: [{ id: 'an1', text: 'n', time: 5, anchor: { type: 'damageTrack' } }],
+    }
+    await useTimelineStore
+      .getState()
+      .openTimeline('ann-rm-test', { role: 'local', seedContent: seedAnn })
+    useTimelineStore.getState().setSelection({ annotationIds: ['an1'] })
+    expect(useTimelineStore.getState().selectedAnnotationIds).toEqual(['an1'])
+    useTimelineStore.getState().removeAnnotation('an1')
+    expect(useTimelineStore.getState().selectedAnnotationIds).toEqual([])
+  })
+
+  it('切换时间轴清空选择数组', async () => {
+    useTimelineStore.getState().setSelection({ eventIds: ['x1', 'x2'] })
+    expect(useTimelineStore.getState().selectedEventIds).toEqual(['x1', 'x2'])
+    await useTimelineStore
+      .getState()
+      .openTimeline('another-tl', { role: 'local', seedContent: baseContent })
+    expect(useTimelineStore.getState().selectedEventIds).toEqual([])
+  })
 })

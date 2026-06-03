@@ -396,6 +396,9 @@ export const useTimelineStore = create<TimelineState>()((set, get) => {
         yDocReady: false,
         selectedEventId: null,
         selectedCastEventId: null,
+        selectedEventIds: [],
+        selectedCastEventIds: [],
+        selectedAnnotationIds: [],
         canUndo: false,
         canRedo: false,
         connectionStatus: 'disconnected',
@@ -490,6 +493,9 @@ export const useTimelineStore = create<TimelineState>()((set, get) => {
         canRedo: false,
         selectedEventId: null,
         selectedCastEventId: null,
+        selectedEventIds: [],
+        selectedCastEventIds: [],
+        selectedAnnotationIds: [],
         peers: [],
       })
       recomputeTimeline()
@@ -770,6 +776,13 @@ export const useTimelineStore = create<TimelineState>()((set, get) => {
       const engine = get().engine
       if (!engine) return
       yRemoveAnnotation(engine.doc, id)
+      if (get().selectedAnnotationIds.includes(id)) {
+        get().setSelection({
+          eventIds: get().selectedEventIds,
+          castEventIds: get().selectedCastEventIds,
+          annotationIds: get().selectedAnnotationIds.filter(x => x !== id),
+        })
+      }
     },
 
     bulkImport: data => {

@@ -813,3 +813,69 @@ describe('bulkImport', () => {
     expect(sync.map(s => s.time)).toEqual([5, 10])
   })
 })
+
+describe('多选 selection', () => {
+  beforeEach(async () => {
+    // eslint-disable-next-line no-global-assign
+    indexedDB = new IDBFactory()
+    useTimelineStore.getState().reset()
+    await useTimelineStore.getState().openTimeline('sel-test', {
+      role: 'local',
+      seedContent: baseContent,
+    })
+  })
+
+  it('setSelection 写入数组并派生单选', () => {
+    useTimelineStore.getState().setSelection({ eventIds: ['e1'] })
+    const s = useTimelineStore.getState()
+    expect(s.selectedEventIds).toEqual(['e1'])
+    expect(s.selectedEventId).toBe('e1') // 单选派生
+    expect(s.selectedCastEventId).toBeNull()
+  })
+
+  it('多选时派生单选为 null（面板不弹）', () => {
+    useTimelineStore.getState().setSelection({ eventIds: ['e1', 'e2'] })
+    const s = useTimelineStore.getState()
+    expect(s.selectedEventIds).toEqual(['e1', 'e2'])
+    expect(s.selectedEventId).toBeNull()
+  })
+
+  it('混合类型选中时派生单选为 null', () => {
+    useTimelineStore.getState().setSelection({ eventIds: ['e1'], castEventIds: ['c1'] })
+    expect(useTimelineStore.getState().selectedEventId).toBeNull()
+    expect(useTimelineStore.getState().selectedCastEventId).toBeNull()
+  })
+
+  it('toggleSelection 切换单个对象', () => {
+    useTimelineStore.getState().setSelection({ castEventIds: ['c1'] })
+    useTimelineStore.getState().toggleSelection('cast', 'c2')
+    expect(useTimelineStore.getState().selectedCastEventIds.sort()).toEqual(['c1', 'c2'])
+    useTimelineStore.getState().toggleSelection('cast', 'c1')
+    expect(useTimelineStore.getState().selectedCastEventIds).toEqual(['c2'])
+  })
+
+  it('addToSelection 求并集去重', () => {
+    useTimelineStore.getState().setSelection({ eventIds: ['e1'] })
+    useTimelineStore.getState().addToSelection({ eventIds: ['e1', 'e2'], annotationIds: ['a1'] })
+    const s = useTimelineStore.getState()
+    expect(s.selectedEventIds.sort()).toEqual(['e1', 'e2'])
+    expect(s.selectedAnnotationIds).toEqual(['a1'])
+  })
+
+  it('clearSelection 清空全部', () => {
+    useTimelineStore.getState().setSelection({ eventIds: ['e1'], castEventIds: ['c1'] })
+    useTimelineStore.getState().clearSelection()
+    const s = useTimelineStore.getState()
+    expect(s.selectedEventIds).toEqual([])
+    expect(s.selectedCastEventIds).toEqual([])
+    expect(s.selectedAnnotationIds).toEqual([])
+    expect(s.selectedEventId).toBeNull()
+  })
+
+  it('selectEvent(id) 等价单选；selectEvent(null) 清空', () => {
+    useTimelineStore.getState().selectEvent('e9')
+    expect(useTimelineStore.getState().selectedEventIds).toEqual(['e9'])
+    useTimelineStore.getState().selectEvent(null)
+    expect(useTimelineStore.getState().selectedEventIds).toEqual([])
+  })
+})

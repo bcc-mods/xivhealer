@@ -60,6 +60,13 @@ function replaceStatData(doc: YDoc, statData: TimelineStatData): void {
   yReplaceStatData(doc, statData as unknown as Record<string, unknown>)
 }
 
+export type SelectionKind = 'damage' | 'cast' | 'annotation'
+export interface SelectionPatch {
+  eventIds?: string[]
+  castEventIds?: string[]
+  annotationIds?: string[]
+}
+
 interface TimelineState {
   /** 同步引擎(持有 Y.Doc 真相源);未打开时间轴时为 null */
   engine: SyncEngine | null
@@ -83,6 +90,12 @@ interface TimelineState {
   selectedEventId: string | null
   /** 选中的技能使用事件 ID */
   selectedCastEventId: string | null
+  /** 选中的伤害事件 ID 列表（多选真相源） */
+  selectedEventIds: string[]
+  /** 选中的技能使用事件 ID 列表 */
+  selectedCastEventIds: string[]
+  /** 选中的注释 ID 列表 */
+  selectedAnnotationIds: string[]
   /** 当前播放时间 (秒) */
   currentTime: number
   /** 缩放级别 (像素/秒) */
@@ -135,6 +148,14 @@ interface TimelineState {
   selectEvent: (eventId: string | null) => void
   /** 选择技能使用事件 */
   selectCastEvent: (castEventId: string | null) => void
+  /** 整组替换选择 */
+  setSelection: (sel: SelectionPatch) => void
+  /** 与现有选择求并集（Shift 框选） */
+  addToSelection: (sel: SelectionPatch) => void
+  /** 切换单个对象选中态（Ctrl/Cmd 点击） */
+  toggleSelection: (kind: SelectionKind, id: string) => void
+  /** 清空全部选择 */
+  clearSelection: () => void
   /** 设置当前时间 */
   setCurrentTime: (time: number) => void
   /** 设置缩放级别 */
@@ -199,6 +220,9 @@ const initialUiState = {
   statistics: null,
   selectedEventId: null,
   selectedCastEventId: null,
+  selectedEventIds: [],
+  selectedCastEventIds: [],
+  selectedAnnotationIds: [],
   currentTime: 0,
   zoomLevel: 30, // xx 像素 / 秒
   pendingScrollProgress: null,
@@ -210,6 +234,19 @@ const initialUiState = {
   isPublished: false,
   sessionRole: 'local' as const,
   peers: [] as PeerState[],
+}
+
+/** 由多选数组派生旧的单选字段：仅当总选中数==1 且为该类型时给出 id */
+function deriveSingle(sel: {
+  eventIds: string[]
+  castEventIds: string[]
+  annotationIds: string[]
+}) {
+  const total = sel.eventIds.length + sel.castEventIds.length + sel.annotationIds.length
+  return {
+    selectedEventId: total === 1 && sel.eventIds.length === 1 ? sel.eventIds[0] : null,
+    selectedCastEventId: total === 1 && sel.castEventIds.length === 1 ? sel.castEventIds[0] : null,
+  }
 }
 
 export const useTimelineStore = create<TimelineState>()((set, get) => {
@@ -533,14 +570,63 @@ export const useTimelineStore = create<TimelineState>()((set, get) => {
       set({ partyState: newPartyState })
     },
 
+    setSelection: sel => {
+      const next = {
+        eventIds: sel.eventIds ?? [],
+        castEventIds: sel.castEventIds ?? [],
+        annotationIds: sel.annotationIds ?? [],
+      }
+      set({
+        selectedEventIds: next.eventIds,
+        selectedCastEventIds: next.castEventIds,
+        selectedAnnotationIds: next.annotationIds,
+        ...deriveSingle(next),
+      })
+      // TODO(Task 8): awareness selection type becomes arrays
+      get().engine?.awareness.setLocalStateField('selection', next as never)
+    },
+
+    addToSelection: sel => {
+      const s = get()
+      get().setSelection({
+        eventIds: [...new Set([...s.selectedEventIds, ...(sel.eventIds ?? [])])],
+        castEventIds: [...new Set([...s.selectedCastEventIds, ...(sel.castEventIds ?? [])])],
+        annotationIds: [...new Set([...s.selectedAnnotationIds, ...(sel.annotationIds ?? [])])],
+      })
+    },
+
+    toggleSelection: (kind, id) => {
+      const s = get()
+      const key =
+        kind === 'damage'
+          ? 'selectedEventIds'
+          : kind === 'cast'
+            ? 'selectedCastEventIds'
+            : 'selectedAnnotationIds'
+      const cur = s[key]
+      const nextArr = cur.includes(id) ? cur.filter(x => x !== id) : [...cur, id]
+      get().setSelection({
+        eventIds: s.selectedEventIds,
+        castEventIds: s.selectedCastEventIds,
+        annotationIds: s.selectedAnnotationIds,
+        [key === 'selectedEventIds'
+          ? 'eventIds'
+          : key === 'selectedCastEventIds'
+            ? 'castEventIds'
+            : 'annotationIds']: nextArr,
+      })
+    },
+
+    clearSelection: () => get().setSelection({}),
+
     selectEvent: eventId => {
-      set({ selectedEventId: eventId, selectedCastEventId: null })
-      get().engine?.awareness.setLocalStateField('selection', { eventId, castEventId: null })
+      if (eventId == null) get().clearSelection()
+      else get().setSelection({ eventIds: [eventId] })
     },
 
     selectCastEvent: castEventId => {
-      set({ selectedCastEventId: castEventId, selectedEventId: null })
-      get().engine?.awareness.setLocalStateField('selection', { eventId: null, castEventId })
+      if (castEventId == null) get().clearSelection()
+      else get().setSelection({ castEventIds: [castEventId] })
     },
 
     setCurrentTime: time =>
@@ -634,7 +720,13 @@ export const useTimelineStore = create<TimelineState>()((set, get) => {
       const engine = get().engine
       if (!engine) return
       yRemoveDamageEvent(engine.doc, eventId)
-      if (get().selectedEventId === eventId) set({ selectedEventId: null })
+      if (get().selectedEventIds.includes(eventId)) {
+        get().setSelection({
+          eventIds: get().selectedEventIds.filter(x => x !== eventId),
+          castEventIds: get().selectedCastEventIds,
+          annotationIds: get().selectedAnnotationIds,
+        })
+      }
     },
 
     addCastEvent: castEvent => {
@@ -653,7 +745,13 @@ export const useTimelineStore = create<TimelineState>()((set, get) => {
       const engine = get().engine
       if (!engine) return
       yRemoveCastEvent(engine.doc, castEventId)
-      if (get().selectedCastEventId === castEventId) set({ selectedCastEventId: null })
+      if (get().selectedCastEventIds.includes(castEventId)) {
+        get().setSelection({
+          eventIds: get().selectedEventIds,
+          castEventIds: get().selectedCastEventIds.filter(x => x !== castEventId),
+          annotationIds: get().selectedAnnotationIds,
+        })
+      }
     },
 
     addAnnotation: annotation => {

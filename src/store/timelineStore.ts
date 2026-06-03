@@ -201,6 +201,12 @@ interface TimelineState {
     castEvents?: CastEvent[]
     syncEvents?: SyncEvent[]
   }) => void
+  /** 批量粘贴：以新 id 写入三类对象（单事务），并选中新对象 */
+  pasteObjects: (objs: {
+    damageEvents: Omit<DamageEvent, 'id'>[]
+    castEvents: Omit<CastEvent, 'id'>[]
+    annotations: Omit<Annotation, 'id'>[]
+  }) => void
   /** 解除回放模式（不可撤销） */
   exitReplayMode: () => void
   /** 更新时间轴统计数据 */
@@ -872,6 +878,32 @@ export const useTimelineStore = create<TimelineState>()((set, get) => {
           ySetMeta(engine.doc, { syncEvents: merged })
         }
       }, LOCAL_ORIGIN)
+    },
+
+    pasteObjects: objs => {
+      const engine = get().engine
+      if (!engine) return
+      const eventIds: string[] = []
+      const castEventIds: string[] = []
+      const annotationIds: string[] = []
+      engine.doc.transact(() => {
+        for (const e of objs.damageEvents) {
+          const id = generateId()
+          yAddDamageEvent(engine.doc, { ...e, id })
+          eventIds.push(id)
+        }
+        for (const c of objs.castEvents) {
+          const id = generateId()
+          yAddCastEvent(engine.doc, { ...c, id })
+          castEventIds.push(id)
+        }
+        for (const a of objs.annotations) {
+          const id = generateId()
+          yAddAnnotation(engine.doc, { ...a, id })
+          annotationIds.push(id)
+        }
+      }, LOCAL_ORIGIN)
+      get().setSelection({ eventIds, castEventIds, annotationIds })
     },
 
     updateStatData: statData => {

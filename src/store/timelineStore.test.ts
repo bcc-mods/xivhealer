@@ -984,3 +984,37 @@ describe('多选 selection', () => {
     expect(useTimelineStore.getState().selectedEventIds).toEqual([])
   })
 })
+
+describe('pasteObjects', () => {
+  beforeEach(async () => {
+    // eslint-disable-next-line no-global-assign
+    indexedDB = new IDBFactory()
+    await useTimelineStore
+      .getState()
+      .openTimeline('paste-test', { role: 'local', seedContent: baseContent })
+  })
+
+  afterEach(() => {
+    useTimelineStore.getState().reset()
+  })
+
+  it('以新 id 写入三类对象并选中它们，单步 undo', () => {
+    const store = useTimelineStore.getState()
+    store.pasteObjects({
+      damageEvents: [{ name: 'X', time: 5, damage: 1, type: 'aoe', damageType: 'magical' }],
+      castEvents: [{ actionId: 16536, timestamp: 6, playerId: 2 }],
+      annotations: [{ text: '注', time: 7, anchor: { type: 'damageTrack' } }],
+    })
+    const s = useTimelineStore.getState()
+    const tl = s.timeline!
+    expect(tl.damageEvents).toHaveLength(1)
+    expect(tl.castEvents).toHaveLength(1)
+    expect(tl.annotations).toHaveLength(1)
+    expect(s.selectedEventIds).toEqual([tl.damageEvents[0].id])
+    expect(s.selectedCastEventIds).toEqual([tl.castEvents[0].id])
+    expect(s.selectedAnnotationIds).toEqual([tl.annotations![0].id])
+
+    store.undo()
+    expect(useTimelineStore.getState().timeline!.damageEvents).toHaveLength(0)
+  })
+})

@@ -1309,23 +1309,28 @@ export default function TimelineCanvas({ width, height }: TimelineCanvasProps) {
   //   技能轨/技能注释 y：fixedAreaHeight + trackIndex*skillTrackHeight + ... - scrollTop
   const canvasLeft = labelColumnWidth + SCROLLBAR_WIDTH
   const DAMAGE_CARD_WIDTH = 150
-  const DAMAGE_CARD_HEIGHT = 28
+  // DamageEventCard: Group y = yOffset + row*LANE_ROW_HEIGHT + LANE_ROW_HEIGHT/2 (=18)
+  // Rect local y=-15, height=30 → real span [base+3, base+33] where base = timeRulerHeight + row*LANE_ROW_HEIGHT
+  const DAMAGE_CARD_RECT_HEIGHT = 30
+  const DAMAGE_CARD_Y_OFFSET = 3 // LANE_ROW_HEIGHT/2 - 15 = 18 - 15 = 3
   const CAST_ICON_SIZE = 30
-  const ANNOTATION_BOX = 16
+  // AnnotationIcon: ICON_SIZE=22, Group placed at x-ICON_SIZE/2, y-ICON_SIZE/2 → center-anchored
+  const ANNOTATION_ICON_SIZE = 22
+  const ANNOTATION_ICON_HALF = ANNOTATION_ICON_SIZE / 2
   buildMarqueeObjectsRef.current = () => {
     const objs: MarqueeObject[] = []
     // 伤害事件（固定区，y 不随垂直滚动）
     for (const event of timeline.damageEvents) {
       const x0 = canvasLeft + event.time * zoomLevel - clampedScrollLeft
       const row = damageEventRowMap.get(event.id) ?? 0
-      const y0 = timeRulerHeight + row * LANE_ROW_HEIGHT
+      const y0 = timeRulerHeight + row * LANE_ROW_HEIGHT + DAMAGE_CARD_Y_OFFSET
       objs.push({
         id: event.id,
         kind: 'damage',
         x0,
         x1: x0 + DAMAGE_CARD_WIDTH,
         y0,
-        y1: y0 + DAMAGE_CARD_HEIGHT,
+        y1: y0 + DAMAGE_CARD_RECT_HEIGHT,
       })
     }
     // cast 事件（技能区，y 随垂直滚动；trackIndex 按 trackGroup 归到父轨道）
@@ -1349,17 +1354,19 @@ export default function TimelineCanvas({ width, height }: TimelineCanvasProps) {
       })
     }
     // 注释（按 anchor 区分固定区 / 技能区）
+    // AnnotationIcon 是 center-anchored：Group 放在 (x - ICON_SIZE/2, y - ICON_SIZE/2)，
+    // 因此传入的 (x, y) 即图标中心，hit-box 对称展开 ±ANNOTATION_ICON_HALF。
     for (const annotation of timeline.annotations ?? []) {
-      const x0 = canvasLeft + annotation.time * zoomLevel - clampedScrollLeft
+      const center = canvasLeft + annotation.time * zoomLevel - clampedScrollLeft
       if (annotation.anchor.type === 'damageTrack') {
         const cy = timeRulerHeight + eventTrackHeight - 20
         objs.push({
           id: annotation.id,
           kind: 'annotation',
-          x0,
-          x1: x0 + ANNOTATION_BOX,
-          y0: cy - ANNOTATION_BOX / 2,
-          y1: cy + ANNOTATION_BOX / 2,
+          x0: center - ANNOTATION_ICON_HALF,
+          x1: center + ANNOTATION_ICON_HALF,
+          y0: cy - ANNOTATION_ICON_HALF,
+          y1: cy + ANNOTATION_ICON_HALF,
         })
       } else {
         const anchor = annotation.anchor
@@ -1372,10 +1379,10 @@ export default function TimelineCanvas({ width, height }: TimelineCanvasProps) {
         objs.push({
           id: annotation.id,
           kind: 'annotation',
-          x0,
-          x1: x0 + ANNOTATION_BOX,
-          y0: cy - ANNOTATION_BOX / 2,
-          y1: cy + ANNOTATION_BOX / 2,
+          x0: center - ANNOTATION_ICON_HALF,
+          x1: center + ANNOTATION_ICON_HALF,
+          y0: cy - ANNOTATION_ICON_HALF,
+          y1: cy + ANNOTATION_ICON_HALF,
         })
       }
     }

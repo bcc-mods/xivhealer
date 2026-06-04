@@ -29,10 +29,18 @@ import { getStatusById } from '@/utils/statusRegistry'
 import { getStatusName } from '@/utils/statusIconUtils'
 import { getSyncScrollProgress, setSyncScrollProgress } from '@/utils/syncScrollProgress'
 import { generateObjectId } from '@/utils/shortId'
+import {
+  CLIPBOARD_MIME,
+  buildClipboardPayload,
+  parseClipboardPayload,
+  remapClipboardForPaste,
+  type PasteResult,
+} from '@/utils/timelineClipboard'
 import AddEventDialog from '../AddEventDialog'
 import AnnotationPopover from './AnnotationPopover'
 import TimelineContextMenu from './TimelineContextMenu'
-import type { ContextMenuState, DamageEventClipboard } from './TimelineContextMenu'
+import PasteConfirmDialog from './PasteConfirmDialog'
+import type { ContextMenuState } from './TimelineContextMenu'
 import TimeRuler from './TimeRuler'
 import DamageEventTrack from './DamageEventTrack'
 import SkillTrackLabels from './SkillTrackLabels'
@@ -54,6 +62,8 @@ import {
   CROSSHAIR_LINE_POINTS,
 } from './constants'
 import HpCurveTrack from './HpCurveTrack'
+import { useMarqueeSelection } from './useMarqueeSelection'
+import type { MarqueeObject } from './marqueeHitTest'
 import { PeerOverlayFixed, PeerOverlayMain } from './PeerOverlay'
 import { formatTimeWithDecimal } from '@/utils/formatters'
 import { useSkillTracks } from '@/hooks/useSkillTracks'
@@ -102,7 +112,9 @@ export default function TimelineCanvas({ width, height }: TimelineCanvasProps) {
   const scrollLeftRef = useRef(0)
   const scrollTopRef = useRef(0)
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
-  const [clipboard, setClipboard] = useState<DamageEventClipboard>(null)
+  const [pasteAvailable, setPasteAvailable] = useState<'checking' | boolean>(false)
+  // 粘贴时有对象无法映射 → 暂存结果，等用户在确认框里决定是否继续
+  const [pendingPaste, setPendingPaste] = useState<PasteResult | null>(null)
   const [editingAnnotation, setEditingAnnotation] = useState<{
     annotation: { id: string; text: string; time: number; anchor: AnnotationAnchor } | null
     time: number
@@ -120,6 +132,19 @@ export default function TimelineCanvas({ width, height }: TimelineCanvasProps) {
     eventId: string
     x: number
   } | null>(null)
+  // 多选群组拖动：拖动一个选中对象时，其余选中对象实时同步偏移。
+  // groupDrag（state）驱动渲染期偏移；groupDragAnchorRef（ref）存抓手起点 x，
+  // 供 onDragMove 计算 delta，避免闭包读到过期 state。
+  const [groupDrag, setGroupDrag] = useState<{
+    delta: number
+    draggedDamageId: string | null
+    draggedCastId: string | null
+  } | null>(null)
+  const groupDragAnchorRef = useRef<{
+    anchorX: number
+    draggedDamageId: string | null
+    draggedCastId: string | null
+  } | null>(null)
   const [addEventAt, setAddEventAt] = useState<number | null>(null)
   // 虚拟滚动状态
   const [scrollLeft, setScrollLeft] = useState(0)
@@ -134,6 +159,12 @@ export default function TimelineCanvas({ width, height }: TimelineCanvasProps) {
   const clampedScrollRef = useRef({ scrollLeft: 0, scrollTop: 0 })
   /** 实际视觉垂直滚动位置，仅由 handleDirectScroll 更新，不受 React state 影响 */
   const visualScrollTopRef = useRef(0)
+  // 框选边缘自动滚动：最近指针的容器局部 x/y、rAF 句柄、循环内追踪的当前水平/垂直滚动
+  const marqueePointerXRef = useRef(0)
+  const marqueePointerYRef = useRef(0)
+  const autoScrollRafRef = useRef<number | null>(null)
+  const autoScrollScrollLeftRef = useRef(0)
+  const autoScrollScrollTopRef = useRef(0)
   // 记录是否点击了背景（用于区分点击和拖动）
   const clickedBackgroundRef = useRef(false)
   const hasMovedRef = useRef(false)
@@ -162,12 +193,12 @@ export default function TimelineCanvas({ width, height }: TimelineCanvasProps) {
   const lastDragSendRef = useRef(0)
   const minimapRef = useRef<TimelineMinimapHandle | null>(null)
   const scrollbarRef = useRef<VerticalScrollbarHandle | null>(null)
+  // 框选：渲染期写入最新的对象 box 构建函数，pointerup 时读取（避免 stale 闭包）
+  const buildMarqueeObjectsRef = useRef<() => MarqueeObject[]>(() => [])
 
   const {
     timeline,
     zoomLevel,
-    selectedEventId,
-    selectedCastEventId,
     pendingScrollProgress,
     selectEvent,
     selectCastEvent,
@@ -183,9 +214,14 @@ export default function TimelineCanvas({ width, height }: TimelineCanvasProps) {
     updateAnnotation,
     removeAnnotation,
   } = useTimelineStore()
+  // 多选 ID 列表——渲染期需响应式订阅，保证高亮随选区变化更新
+  const selectedEventIds = useTimelineStore(s => s.selectedEventIds)
+  const selectedCastEventIds = useTimelineStore(s => s.selectedCastEventIds)
+  const selectedAnnotationIds = useTimelineStore(s => s.selectedAnnotationIds)
   const { actions } = useMitigationStore()
   const { isDamageTrackCollapsed, toggleDamageTrackCollapsed } = useUIStore()
   const enableHpSimulation = useUIStore(s => s.enableHpSimulation)
+  const canvasTool = useUIStore(s => s.canvasTool)
   const calculationResults = useDamageCalculationResults()
   const removalTimelinesByExcludeId = useRemovalTimelinesByExcludeId()
   const statusTimelineByPlayer = useStatusTimelineByPlayer()
@@ -296,26 +332,46 @@ export default function TimelineCanvas({ width, height }: TimelineCanvasProps) {
     minimapRef.current?.updateViewport(newScrollLeft)
   }, [])
 
-  useTimelinePanZoom(fixedStageRef, panZoomRefs, {
-    enableVerticalScroll: false,
-    isReadOnly,
-    setScrollLeft,
-    setScrollTop,
-    onDirectScroll: handleDirectScroll,
-  })
-  useTimelinePanZoom(stageRef, panZoomRefs, {
-    enableVerticalScroll: true,
-    isReadOnly,
-    setScrollLeft,
-    setScrollTop,
-    onDirectScroll: handleDirectScroll,
-  })
+  // 卸载兜底：若拖框中途组件卸载，停掉边缘自动滚动 rAF，避免无限重排
+  useEffect(() => {
+    return () => {
+      if (autoScrollRafRef.current !== null) cancelAnimationFrame(autoScrollRafRef.current)
+    }
+  }, [])
 
   // 布局常量
   const timeRulerHeight = 30
   const skillTrackHeight = 40
   const labelColumnWidth = 70
   const minimapHeight = 80 + 16 + 1 // canvas(80) + p-2 padding(16) + border-t(1)
+
+  // 固定区域 Stage：标尺带内拖动让位给框选（infinite-height）；select 模式全局让位。
+  useTimelinePanZoom(fixedStageRef, panZoomRefs, {
+    enableVerticalScroll: false,
+    isReadOnly,
+    setScrollLeft,
+    setScrollTop,
+    onDirectScroll: handleDirectScroll,
+    canvasTool,
+    rulerHeight: timeRulerHeight,
+  })
+  // 技能轨道 Stage：容器顶部即轨道区，不含标尺带 → rulerHeight 传 0，仅 select 模式让位。
+  useTimelinePanZoom(stageRef, panZoomRefs, {
+    enableVerticalScroll: true,
+    isReadOnly,
+    setScrollLeft,
+    setScrollTop,
+    onDirectScroll: handleDirectScroll,
+    canvasTool,
+    rulerHeight: 0,
+  })
+
+  // 框选：buildObjects 委托给渲染期写入的 ref，保证用当前滚动/缩放下的屏幕坐标
+  const buildMarqueeObjects = useCallback(() => buildMarqueeObjectsRef.current(), [])
+  const marquee = useMarqueeSelection({
+    rulerHeight: timeRulerHeight,
+    buildObjects: buildMarqueeObjects,
+  })
 
   // 计算布局数据（仅在 timeline/zoomLevel/actions 变化时重新计算）
   const layoutData = useMemo(() => {
@@ -401,7 +457,11 @@ export default function TimelineCanvas({ width, height }: TimelineCanvasProps) {
 
   // 十字准线：鼠标移动事件（直接操作 Konva 节点，不触发 React 重渲染）
   const createCrosshairMoveHandler = useCallback(
-    (stageRefParam: React.RefObject<Konva.Stage | null>, withTrackHighlight: boolean) =>
+    (
+      stageRefParam: React.RefObject<Konva.Stage | null>,
+      withTrackHighlight: boolean,
+      hasRuler: boolean
+    ) =>
       (e: MouseEvent) => {
         if (isDraggingRef.current) {
           if (hoverTimeRef.current !== null) {
@@ -421,6 +481,11 @@ export default function TimelineCanvas({ width, height }: TimelineCanvasProps) {
         const xPx = time * zoomLevel
 
         hoverTimeRef.current = time
+
+        // 光标提示：当一次拖拽会触发框选时给 crosshair（框选模式整片画布，或鼠标在时间标尺带内）
+        const overRuler = hasRuler && e.clientY - rect.top <= timeRulerHeight
+        stage.container().style.cursor =
+          useUIStore.getState().canvasTool === 'select' || overRuler ? 'crosshair' : 'default'
 
         // 节流上报本地光标位置（~50ms），避免高频 awareness 写入
         const now = Date.now()
@@ -531,8 +596,8 @@ export default function TimelineCanvas({ width, height }: TimelineCanvasProps) {
     const mainContainer = mainStage.container()
     const fixedContainer = fixedStage.container()
 
-    const handleMainMove = createCrosshairMoveHandler(stageRef, true)
-    const handleFixedMove = createCrosshairMoveHandler(fixedStageRef, false)
+    const handleMainMove = createCrosshairMoveHandler(stageRef, true, false)
+    const handleFixedMove = createCrosshairMoveHandler(fixedStageRef, false, true)
 
     mainContainer.addEventListener('mousemove', handleMainMove)
     mainContainer.addEventListener('mouseleave', handleCrosshairLeave)
@@ -670,33 +735,84 @@ export default function TimelineCanvas({ width, height }: TimelineCanvasProps) {
     }
   }, [width, zoomLevel, setZoomLevel])
 
-  // 复制 / 粘贴伤害事件（热键与右键菜单共用）
-  const handleContextMenuCopyDamageEvent = useCallback(
-    (eventId: string) => {
-      if (!timeline) return
-      const event = timeline.damageEvents.find(e => e.id === eventId)
-      if (!event) return
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      const { id: _id, time: _time, ...rest } = event
-      setClipboard(rest)
-      toast.success('已复制伤害事件')
+  // 批量复制选中对象到系统剪贴板（自定义 web MIME，外部应用不可见）
+  const copySelection = useCallback(async () => {
+    const s = useTimelineStore.getState()
+    if (!s.timeline) return
+    const total =
+      s.selectedEventIds.length + s.selectedCastEventIds.length + s.selectedAnnotationIds.length
+    if (total === 0) return
+    const payload = buildClipboardPayload(s.timeline, {
+      eventIds: s.selectedEventIds,
+      castEventIds: s.selectedCastEventIds,
+      annotationIds: s.selectedAnnotationIds,
+    })
+    try {
+      const blob = new Blob([JSON.stringify(payload)], { type: CLIPBOARD_MIME })
+      await navigator.clipboard.write([new ClipboardItem({ [CLIPBOARD_MIME]: blob })])
+      toast.success(`已复制 ${total} 个对象`)
+    } catch {
+      toast.error('复制失败：当前浏览器不支持写入剪贴板')
+    }
+  }, [])
+
+  // 从系统剪贴板粘贴时间轴对象，锚定到目标时间
+  // 把 remap 结果写入时间轴并选中
+  const commitPaste = useCallback((result: PasteResult) => {
+    useTimelineStore.getState().pasteObjects({
+      damageEvents: result.damageEvents,
+      castEvents: result.castEvents,
+      annotations: result.annotations,
+    })
+    if (result.skipped > 0) toast.warning(`已粘贴，跳过 ${result.skipped} 个无法落位的对象`)
+    else toast.success('已粘贴')
+  }, [])
+
+  const pasteAtTime = useCallback(
+    async (targetTime: number) => {
+      let text: string | null = null
+      try {
+        const items = await navigator.clipboard.read()
+        const item = items.find(it => it.types.includes(CLIPBOARD_MIME))
+        if (item) text = await (await item.getType(CLIPBOARD_MIME)).text()
+      } catch {
+        // 读取剪贴板失败（不支持 / 无权限）：静默不粘贴
+      }
+      const payload = text ? parseClipboardPayload(text) : null
+      if (!payload) return
+      const tl = useTimelineStore.getState().timeline
+      if (!tl) return
+      const validActionIds = new Set(useMitigationStore.getState().actions.map(a => a.id))
+      const result = remapClipboardForPaste(payload, {
+        currentComposition: tl.composition,
+        targetTime,
+        validActionIds,
+      })
+      const kept = result.damageEvents.length + result.castEvents.length + result.annotations.length
+      // 有对象无法映射：全被跳过则直接报错；否则弹确认框让用户决定是否粘贴其余
+      if (result.skipped > 0) {
+        if (kept === 0) {
+          toast.error(`无法粘贴：${result.skipped} 个对象都无法映射到当前时间轴轨道`)
+          return
+        }
+        setPendingPaste(result)
+        return
+      }
+      commitPaste(result)
     },
-    [timeline]
+    [commitPaste]
   )
 
-  const handleContextMenuPasteDamageEvent = useCallback(
-    (time: number) => {
-      if (!clipboard) return
-      const { addDamageEvent } = useTimelineStore.getState()
-      addDamageEvent({
-        ...clipboard,
-        id: generateObjectId(),
-        time,
-      })
-      toast.success('已粘贴伤害事件')
-    },
-    [clipboard]
-  )
+  // 探测系统剪贴板是否含有时间轴数据（用于右键空白菜单显示粘贴项）
+  const probePaste = useCallback(async () => {
+    setPasteAvailable('checking')
+    try {
+      const items = await navigator.clipboard.read()
+      setPasteAvailable(items.some(it => it.types.includes(CLIPBOARD_MIME)))
+    } catch {
+      setPasteAvailable(false)
+    }
+  }, [])
 
   // 撤销 / 重做
   const runUndoRedo = (op: 'undo' | 'redo') => {
@@ -714,46 +830,61 @@ export default function TimelineCanvas({ width, height }: TimelineCanvasProps) {
     preventDefault: true,
   })
 
-  // 删除选中的事件或注释
+  // 全选：选中时间轴所有伤害事件 / 技能 cast / 注释（mod+a 快捷键与空白处右键菜单共用）
+  const selectAll = useCallback(() => {
+    const s = useTimelineStore.getState()
+    const tl = s.timeline
+    if (!tl) return
+    s.setSelection({
+      eventIds: tl.damageEvents.map(e => e.id),
+      castEventIds: tl.castEvents.map(c => c.id),
+      annotationIds: (tl.annotations ?? []).map(a => a.id),
+    })
+  }, [])
+  // 全选只读取选择状态，只读/回放模式也允许
+  useHotkeys('mod+a', selectAll, { enabled: true, preventDefault: true }, [selectAll])
+
+  // 删除：多选时批量删除，否则删单个选中项或固定注释
   useHotkeys(
     'delete, backspace',
     () => {
+      const s = useTimelineStore.getState()
+      const total =
+        s.selectedEventIds.length + s.selectedCastEventIds.length + s.selectedAnnotationIds.length
+      if (total > 0) {
+        s.bulkDeleteSelection()
+        return
+      }
       if (pinnedAnnotationId) {
         removeAnnotation(pinnedAnnotationId)
         setPinnedAnnotationId(null)
-      } else if (selectedEventId) {
-        removeDamageEvent(selectedEventId)
-      } else if (selectedCastEventId) {
-        removeCastEvent(selectedCastEventId)
       }
     },
     { enabled: !isReadOnly },
-    [pinnedAnnotationId, selectedEventId, selectedCastEventId]
+    [pinnedAnnotationId]
   )
 
-  // 复制选中的伤害事件
+  // 复制选中对象到系统剪贴板（只读/回放模式也允许：复制不改时间轴）
   useHotkeys(
     'mod+c',
     () => {
-      if (!selectedEventId) return
-      handleContextMenuCopyDamageEvent(selectedEventId)
+      void copySelection()
     },
-    { enabled: !isReadOnly },
-    [selectedEventId, handleContextMenuCopyDamageEvent]
+    { enabled: true },
+    [copySelection]
   )
 
-  // 粘贴伤害事件（在鼠标悬浮位置，若无则在视口中央）
+  // 粘贴（在鼠标悬浮位置，若无则在视口中央）
   useHotkeys(
     'mod+v',
     () => {
-      if (!clipboard) return
-      const pasteTime =
+      const t =
         hoverTimeRef.current ??
         (clampedScrollRef.current.scrollLeft + viewportWidth / 2) / zoomLevel
-      handleContextMenuPasteDamageEvent(Math.round(pasteTime * 10) / 10)
+      void pasteAtTime(Math.round(t * 10) / 10)
     },
     { enabled: !isReadOnly, preventDefault: true },
-    [clipboard, viewportWidth, zoomLevel, handleContextMenuPasteDamageEvent]
+    [pasteAtTime, viewportWidth, zoomLevel]
   )
 
   // 计算技能图标的 tooltip 锚点矩形
@@ -832,14 +963,77 @@ export default function TimelineCanvas({ width, height }: TimelineCanvasProps) {
     addCastAt(track.actionId, track.playerId, time)
   }
 
+  // 群组拖动：若被拖动对象（damage/cast 抓手）属于一个总数 >1 的多选，则记录抓手起点
+  // 并进入群组拖动态。total 计入 annotation —— 注释只能作为随动对象，不能作抓手。
+  // 返回是否进入群组拖动（供调用方决定是否走单体逻辑）。
+  const tryBeginGroupDrag = useCallback(
+    (kind: 'damage' | 'cast', id: string, anchorX: number): boolean => {
+      const s = useTimelineStore.getState()
+      const total =
+        s.selectedEventIds.length + s.selectedCastEventIds.length + s.selectedAnnotationIds.length
+      const inSel =
+        kind === 'damage' ? s.selectedEventIds.includes(id) : s.selectedCastEventIds.includes(id)
+      if (total <= 1 || !inSel) {
+        groupDragAnchorRef.current = null
+        return false
+      }
+      const draggedDamageId = kind === 'damage' ? id : null
+      const draggedCastId = kind === 'cast' ? id : null
+      groupDragAnchorRef.current = { anchorX, draggedDamageId, draggedCastId }
+      setGroupDrag({ delta: 0, draggedDamageId, draggedCastId })
+      // 广播随动对象 id（排除被抓住的那个，仅从其同类数组剔除）供协作者画 ghost。
+      // 成员在整段拖动内固定，begin 时设一次即可；逐帧的 dragging 已携带抓手 ghost，
+      // peer 据此派生 delta 套用到各随动对象的原始时间。
+      s.setLocalDragGroup({
+        eventIds: kind === 'damage' ? s.selectedEventIds.filter(x => x !== id) : s.selectedEventIds,
+        castEventIds:
+          kind === 'cast' ? s.selectedCastEventIds.filter(x => x !== id) : s.selectedCastEventIds,
+        annotationIds: s.selectedAnnotationIds,
+      })
+      return true
+    },
+    []
+  )
+
+  // 群组拖动中：用抓手当前 x 与起点的差驱动其余选中对象的实时偏移。
+  const updateGroupDrag = useCallback((currentX: number) => {
+    const anchor = groupDragAnchorRef.current
+    if (!anchor) return
+    setGroupDrag({
+      delta: currentX - anchor.anchorX,
+      draggedDamageId: anchor.draggedDamageId,
+      draggedCastId: anchor.draggedCastId,
+    })
+  }, [])
+
+  const endGroupDrag = useCallback(() => {
+    groupDragAnchorRef.current = null
+    setGroupDrag(null)
+    // 清除广播的群组随动 id（每条 drag-end 路径都会调用本函数兜底）
+    useTimelineStore.getState().setLocalDragGroup({
+      eventIds: [],
+      castEventIds: [],
+      annotationIds: [],
+    })
+  }, [])
+
   // 处理伤害事件拖动
   const handleEventDragEnd = (eventId: string, x: number) => {
     if (isReadOnly) return
     const newTime = Math.max(TIMELINE_START_TIME, Math.round((x / zoomLevel) * 10) / 10)
-    const { updateDamageEvent, setLocalDragging } = useTimelineStore.getState()
-    updateDamageEvent(eventId, { time: newTime })
-    setLocalDragging(null)
+    const s = useTimelineStore.getState()
+    const totalSelected =
+      s.selectedEventIds.length + s.selectedCastEventIds.length + s.selectedAnnotationIds.length
+    if (totalSelected > 1 && s.selectedEventIds.includes(eventId)) {
+      // 多选：整体等距平移，以被拖动事件的原始时间为基准
+      const orig = timeline?.damageEvents.find(e => e.id === eventId)?.time ?? newTime
+      s.bulkMoveSelection(newTime - orig)
+    } else {
+      s.updateDamageEvent(eventId, { time: newTime })
+    }
+    s.setLocalDragging(null)
     setDraggingEventPosition(null)
+    endGroupDrag()
   }
 
   // 上报伤害事件拖动 ghost（start 立即, move 节流 ~50ms）
@@ -935,8 +1129,18 @@ export default function TimelineCanvas({ width, height }: TimelineCanvasProps) {
         if (member) nextActionId = member.id
       }
     }
-    updateCastEvent(castEventId, { timestamp: newTime, actionId: nextActionId })
+    const s = useTimelineStore.getState()
+    const totalSelected =
+      s.selectedEventIds.length + s.selectedCastEventIds.length + s.selectedAnnotationIds.length
+    if (totalSelected > 1 && s.selectedCastEventIds.includes(castEventId)) {
+      // 多选：整体等距平移，以被拖动 cast 的原始时间戳为基准；跳过变体切换
+      const orig = timeline?.castEvents.find(c => c.id === castEventId)?.timestamp ?? newTime
+      s.bulkMoveSelection(newTime - orig)
+    } else {
+      updateCastEvent(castEventId, { timestamp: newTime, actionId: nextActionId })
+    }
     useTimelineStore.getState().setLocalDragging(null)
+    endGroupDrag()
   }
 
   // 平移刚结束的同帧内阻止意外选中（panJustEndedRef 由 rAF 自动清除）
@@ -963,6 +1167,27 @@ export default function TimelineCanvas({ width, height }: TimelineCanvasProps) {
       clientY: number,
       time: number
     ) => {
+      // 右键命中多选集合内对象时：显示批量菜单，不把多选塌缩为单选
+      const sel = useTimelineStore.getState()
+      const total =
+        sel.selectedEventIds.length +
+        sel.selectedCastEventIds.length +
+        sel.selectedAnnotationIds.length
+      const inMulti =
+        (payload.type === 'damageEvent' && sel.selectedEventIds.includes(payload.eventId)) ||
+        (payload.type === 'castEvent' && sel.selectedCastEventIds.includes(payload.castEventId)) ||
+        (payload.type === 'annotation' && sel.selectedAnnotationIds.includes(payload.annotationId))
+      if (total > 1 && inMulti) {
+        // 批量菜单：只读/回放模式只显示「复制」（删除在菜单内按只读隐藏），仍 return 避免塌缩多选
+        setContextMenu({ type: 'multiSelection', count: total, x: clientX, y: clientY, time })
+        return
+      }
+
+      // 右键空白轨道时探测系统剪贴板，为粘贴项提供可用性状态
+      if (payload.type === 'damageTrackEmpty' || payload.type === 'skillTrackEmpty') {
+        void probePaste()
+      }
+
       if (payload.type === 'castEvent') {
         selectCastEvent(payload.castEventId)
       } else if (payload.type === 'damageEvent') {
@@ -971,11 +1196,12 @@ export default function TimelineCanvas({ width, height }: TimelineCanvasProps) {
 
       setContextMenu({ ...payload, x: clientX, y: clientY, time })
     },
-    [selectCastEvent, selectEvent]
+    [selectCastEvent, selectEvent, probePaste]
   )
 
   const handleContextMenuClose = useCallback(() => {
     setContextMenu(null)
+    setPasteAvailable(false)
   }, [])
 
   const handleContextMenuAddCast = (actionId: number, playerId: number, time: number) => {
@@ -1148,6 +1374,16 @@ export default function TimelineCanvas({ width, height }: TimelineCanvasProps) {
 
   const handleAnnotationContextMenu = useCallback(
     (annotationId: string, clientX: number, clientY: number, time: number) => {
+      const sel = useTimelineStore.getState()
+      const total =
+        sel.selectedEventIds.length +
+        sel.selectedCastEventIds.length +
+        sel.selectedAnnotationIds.length
+      if (total > 1 && sel.selectedAnnotationIds.includes(annotationId)) {
+        // 右键命中多选集合内注释：弹批量菜单（只读也弹，仅显示复制），return 避免塌缩多选
+        setContextMenu({ type: 'multiSelection', count: total, x: clientX, y: clientY, time })
+        return
+      }
       setPinnedAnnotationId(null)
       setContextMenu({ type: 'annotation', annotationId, x: clientX, y: clientY, time })
     },
@@ -1195,8 +1431,10 @@ export default function TimelineCanvas({ width, height }: TimelineCanvasProps) {
       const newTime = Math.max(TIMELINE_START_TIME, Math.round((newX / zoomLevel) * 10) / 10)
       updateAnnotation(annotationId, { time: newTime })
       useTimelineStore.getState().setLocalDragging(null)
+      // 与 handleEventDragEnd / handleCastEventDragEnd 一致地兜底清除群组拖动态
+      endGroupDrag()
     },
-    [zoomLevel, updateAnnotation]
+    [zoomLevel, updateAnnotation, endGroupDrag]
   )
 
   const handleAnnotationConfirm = useCallback(
@@ -1283,6 +1521,217 @@ export default function TimelineCanvas({ width, height }: TimelineCanvasProps) {
   const hoverBasePos = hoverAnnotation ? getAnnotationBasePos(hoverAnnotation) : null
   const pinnedBasePos = pinnedAnnotation ? getAnnotationBasePos(pinnedAnnotation) : null
 
+  // 框选对象 box 构建（容器屏幕坐标系，origin = timelineContainerRef 左上角）。
+  // 坐标公式与渲染层一致：
+  //   canvasLeft = labelColumnWidth + SCROLLBAR_WIDTH（标签列宽，画布内容从此处开始）
+  //   x = canvasLeft + time*zoomLevel - scrollLeft
+  //   伤害轨/伤害注释 y：固定区，不随垂直滚动（timeRulerHeight 起）
+  //   技能轨/技能注释 y：fixedAreaHeight + trackIndex*skillTrackHeight + ... - scrollTop
+  const canvasLeft = labelColumnWidth + SCROLLBAR_WIDTH
+  const DAMAGE_CARD_WIDTH = 150
+  // DamageEventCard: Group y = yOffset + row*LANE_ROW_HEIGHT + LANE_ROW_HEIGHT/2 (=18)
+  // Rect local y=-15, height=30 → real span [base+3, base+33] where base = timeRulerHeight + row*LANE_ROW_HEIGHT
+  const DAMAGE_CARD_RECT_HEIGHT = 30
+  const DAMAGE_CARD_Y_OFFSET = 3 // LANE_ROW_HEIGHT/2 - 15 = 18 - 15 = 3
+  const CAST_ICON_SIZE = 30
+  // AnnotationIcon: ICON_SIZE=22, Group placed at x-ICON_SIZE/2, y-ICON_SIZE/2 → center-anchored
+  const ANNOTATION_ICON_SIZE = 22
+  const ANNOTATION_ICON_HALF = ANNOTATION_ICON_SIZE / 2
+  buildMarqueeObjectsRef.current = () => {
+    const objs: MarqueeObject[] = []
+    // 伤害事件（固定区，y 不随垂直滚动）；只框选过滤后可见的事件，与渲染一致
+    for (const event of filteredDamageEvents) {
+      const x0 = canvasLeft + event.time * zoomLevel - clampedScrollLeft
+      const row = damageEventRowMap.get(event.id) ?? 0
+      const y0 = timeRulerHeight + row * LANE_ROW_HEIGHT + DAMAGE_CARD_Y_OFFSET
+      objs.push({
+        id: event.id,
+        kind: 'damage',
+        x0,
+        x1: x0 + DAMAGE_CARD_WIDTH,
+        y0,
+        y1: y0 + DAMAGE_CARD_RECT_HEIGHT,
+      })
+    }
+    // cast 事件（技能区，y 随垂直滚动；trackIndex 按 trackGroup 归到父轨道）
+    for (const ce of timeline.castEvents) {
+      const castAction = actionMap.get(ce.actionId)
+      const castGroupId = castAction?.trackGroup ?? ce.actionId
+      const trackIndex = skillTracks.findIndex(
+        t => t.playerId === ce.playerId && t.actionId === castGroupId
+      )
+      if (trackIndex === -1) continue
+      const x0 = canvasLeft + ce.timestamp * zoomLevel - clampedScrollLeft
+      const trackY = trackIndex * skillTrackHeight + skillTrackHeight / 2
+      const y0 = fixedAreaHeight + trackY - CAST_ICON_SIZE / 2 - clampedScrollTop
+      objs.push({
+        id: ce.id,
+        kind: 'cast',
+        x0,
+        x1: x0 + CAST_ICON_SIZE,
+        y0,
+        y1: y0 + CAST_ICON_SIZE,
+      })
+    }
+    // 注释（按 anchor 区分固定区 / 技能区）
+    // AnnotationIcon 是 center-anchored：Group 放在 (x - ICON_SIZE/2, y - ICON_SIZE/2)，
+    // 因此传入的 (x, y) 即图标中心，hit-box 对称展开 ±ANNOTATION_ICON_HALF。
+    for (const annotation of timeline.annotations ?? []) {
+      const center = canvasLeft + annotation.time * zoomLevel - clampedScrollLeft
+      if (annotation.anchor.type === 'damageTrack') {
+        const cy = timeRulerHeight + eventTrackHeight - 20
+        objs.push({
+          id: annotation.id,
+          kind: 'annotation',
+          x0: center - ANNOTATION_ICON_HALF,
+          x1: center + ANNOTATION_ICON_HALF,
+          y0: cy - ANNOTATION_ICON_HALF,
+          y1: cy + ANNOTATION_ICON_HALF,
+        })
+      } else {
+        const anchor = annotation.anchor
+        const trackIndex = skillTracks.findIndex(
+          t => t.playerId === anchor.playerId && t.actionId === anchor.actionId
+        )
+        if (trackIndex === -1) continue
+        const cy =
+          fixedAreaHeight + trackIndex * skillTrackHeight + skillTrackHeight / 2 - clampedScrollTop
+        objs.push({
+          id: annotation.id,
+          kind: 'annotation',
+          x0: center - ANNOTATION_ICON_HALF,
+          x1: center + ANNOTATION_ICON_HALF,
+          y0: cy - ANNOTATION_ICON_HALF,
+          y1: cy + ANNOTATION_ICON_HALF,
+        })
+      }
+    }
+    return objs
+  }
+
+  // 框选指针处理：在 select 模式或落在标尺带内时接管拖动，注册 window move/up。
+  // 坐标换算到容器局部坐标（与 buildObjects / overlay 同一 origin）。
+  const handleMarqueePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return
+    const container = timelineContainerRef.current
+    if (!container) return
+    const rect = container.getBoundingClientRect()
+    const localY = e.clientY - rect.top
+    // 落在底部 minimap 区：交给 minimap 自身交互，不启动框选
+    if (localY >= height - minimapHeight) return
+    const inRuler = localY <= timeRulerHeight
+    if (canvasTool !== 'select' && !inRuler) return
+    const localX = e.clientX - rect.left
+    // 按下点落在某个对象（根 Group 标 name="tlObject"）上时交给 Konva 处理（拖动 / 单击选中），
+    // 不启动框选；仅空白处按下才框选（按对象=操作对象，按空白=框选）。
+    // 用 Konva 命中图判定，而非重算各对象像素盒——cast 整条 Group（图标 + 绿色持续条 +
+    // 蓝色 CD 条 + 全宽响应层）都可拖动，盒子法会漏掉条上的按压；命中图天然知道真实几何。
+    // 标尺带内无对象，inRuler 时跳过此判断，保持全高度框选。
+    if (!inRuler) {
+      const onObject = [fixedStageRef.current, stageRef.current].some(stage => {
+        if (!stage) return false
+        const sbox = stage.container().getBoundingClientRect()
+        const px = e.clientX - sbox.left
+        const py = e.clientY - sbox.top
+        if (px < 0 || py < 0 || px > sbox.width || py > sbox.height) return false
+        return !!stage.getIntersection({ x: px, y: py })?.findAncestor('.tlObject', true)
+      })
+      if (onObject) return
+    }
+    marquee.onPointerDown(localX, localY, e.shiftKey)
+
+    // 边缘自动滚动：拖框/拖标尺时光标靠近边缘，自动滚动以选取超出一屏的内容。
+    // 水平作用于整片画布；垂直仅作用于主舞台（技能轨区：fixedAreaHeight ~ canvasBottom）。
+    const canvasLeftEdge = labelColumnWidth + SCROLLBAR_WIDTH
+    const canvasBottom = height - minimapHeight
+    const EDGE = 80 // 触发带宽度（px）
+    const MAX_STEP = 16 // 每帧最大滚动量（px）
+    marqueePointerXRef.current = localX
+    marqueePointerYRef.current = localY
+    autoScrollScrollLeftRef.current = clampedScrollRef.current.scrollLeft
+    autoScrollScrollTopRef.current = clampedScrollRef.current.scrollTop
+    // 返回某轴的滚动增量（已夹在边界内），并更新追踪 ref
+    const axisStep = (
+      pos: number,
+      lowEdge: number,
+      highEdge: number,
+      curRef: React.MutableRefObject<number>,
+      min: number,
+      max: number
+    ): number => {
+      let dir = 0
+      let intensity = 0
+      if (pos < lowEdge + EDGE) {
+        dir = -1
+        intensity = Math.min(1, (lowEdge + EDGE - pos) / EDGE)
+      } else if (pos > highEdge - EDGE) {
+        dir = 1
+        intensity = Math.min(1, (pos - (highEdge - EDGE)) / EDGE)
+      }
+      if (dir === 0) return 0
+      const next = Math.max(min, Math.min(max, curRef.current + dir * MAX_STEP * intensity))
+      const delta = next - curRef.current
+      curRef.current = next
+      return delta
+    }
+    const tick = () => {
+      const dx = axisStep(
+        marqueePointerXRef.current,
+        canvasLeftEdge,
+        width,
+        autoScrollScrollLeftRef,
+        minScrollLeftRef.current,
+        maxScrollLeftRef.current
+      )
+      // 垂直：仅当指针在主区内（>= fixedAreaHeight）才滚动；触发带为主区顶/底
+      const py = marqueePointerYRef.current
+      const dy =
+        py >= fixedAreaHeight
+          ? axisStep(
+              py,
+              fixedAreaHeight,
+              canvasBottom,
+              autoScrollScrollTopRef,
+              0,
+              maxScrollTopRef.current
+            )
+          : 0
+      if (Math.abs(dx) > 0.01 || Math.abs(dy) > 0.01) {
+        const nextLeft = autoScrollScrollLeftRef.current
+        const nextTop = autoScrollScrollTopRef.current
+        clampedScrollRef.current.scrollTop = nextTop
+        if (Math.abs(dx) > 0.01) setScrollLeft(nextLeft)
+        if (Math.abs(dy) > 0.01) setScrollTop(nextTop)
+        handleDirectScroll(nextLeft, nextTop)
+        marquee.shiftStart(-dx, -dy) // 起点锚定世界坐标（垂直锚定主区）
+      }
+      autoScrollRafRef.current = requestAnimationFrame(tick)
+    }
+    autoScrollRafRef.current = requestAnimationFrame(tick)
+
+    const stopAutoScroll = () => {
+      if (autoScrollRafRef.current !== null) {
+        cancelAnimationFrame(autoScrollRafRef.current)
+        autoScrollRafRef.current = null
+      }
+    }
+
+    const onMove = (ev: PointerEvent) => {
+      const r = container.getBoundingClientRect()
+      marqueePointerXRef.current = ev.clientX - r.left
+      marqueePointerYRef.current = ev.clientY - r.top
+      marquee.onPointerMove(ev.clientX - r.left, ev.clientY - r.top)
+    }
+    const onUp = () => {
+      stopAutoScroll()
+      marquee.onPointerUp()
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+  }
+
   return (
     <div
       ref={timelineContainerRef}
@@ -1295,6 +1744,7 @@ export default function TimelineCanvas({ width, height }: TimelineCanvasProps) {
           '--tl-scroll-y': `${clampedScrollTop}px`,
         } as React.CSSProperties
       }
+      onPointerDown={handleMarqueePointerDown}
       onClick={() => {
         if (annotationClickedRef.current) {
           annotationClickedRef.current = false
@@ -1304,6 +1754,26 @@ export default function TimelineCanvas({ width, height }: TimelineCanvasProps) {
         setPinnedAnnotationId(null)
       }}
     >
+      {/* 框选高亮覆盖层（DOM div，非 Konva）；底边夹到画布区，不覆盖底部 minimap */}
+      {marquee.rect &&
+        (() => {
+          const r = marquee.rect
+          const canvasBottom = height - minimapHeight
+          const top = r.infinite ? 0 : Math.max(0, Math.min(r.y0, r.y1))
+          const bottom = r.infinite ? canvasBottom : Math.min(canvasBottom, Math.max(r.y0, r.y1))
+          return (
+            <div
+              className="pointer-events-none absolute z-20 border border-dashed border-primary bg-primary/10"
+              style={{
+                left: Math.min(r.x0, r.x1),
+                top,
+                width: Math.abs(r.x1 - r.x0),
+                height: Math.max(0, bottom - top),
+              }}
+            />
+          )
+        })()}
+
       {/* 固定顶部区域：时间标尺 + 伤害事件轨道 */}
       <div className="flex flex-shrink-0" style={{ height: fixedAreaHeight }}>
         {/* 左侧固定标签（宽度包含滚动条区域） */}
@@ -1373,7 +1843,10 @@ export default function TimelineCanvas({ width, height }: TimelineCanvasProps) {
 
               <DamageEventTrack
                 events={filteredDamageEvents}
-                selectedEventId={selectedEventId}
+                selectedEventIds={selectedEventIds}
+                groupDragDelta={groupDrag?.delta ?? 0}
+                groupDraggedId={groupDrag?.draggedDamageId ?? null}
+                selectedAnnotationIds={selectedAnnotationIds}
                 zoomLevel={zoomLevel}
                 timelineWidth={timelineWidth}
                 trackHeight={eventTrackHeight}
@@ -1389,10 +1862,12 @@ export default function TimelineCanvas({ width, height }: TimelineCanvasProps) {
                 onDragStart={(eventId, x) => {
                   setDraggingEventPosition({ eventId, x })
                   reportDamageDrag(eventId, x, true)
+                  tryBeginGroupDrag('damage', eventId, x)
                 }}
                 onDragMove={(eventId, x) => {
                   setDraggingEventPosition({ eventId, x })
                   reportDamageDrag(eventId, x)
+                  updateGroupDrag(x)
                 }}
                 onDragEnd={handleEventDragEnd}
                 onAnnotationDragMove={reportAnnotationDrag}
@@ -1453,6 +1928,7 @@ export default function TimelineCanvas({ width, height }: TimelineCanvasProps) {
                 fixedAreaHeight={fixedAreaHeight}
                 damageTrackHeight={eventTrackHeight}
                 annotations={damageTrackAnnotations}
+                castEvents={timeline?.castEvents ?? []}
               />
             </Layer>
           </Stage>
@@ -1529,7 +2005,11 @@ export default function TimelineCanvas({ width, height }: TimelineCanvasProps) {
                 timelineWidth={timelineWidth}
                 trackHeight={skillTrackHeight}
                 maxTime={maxTime}
-                selectedCastEventId={selectedCastEventId}
+                selectedCastEventIds={selectedCastEventIds}
+                groupDragDelta={groupDrag?.delta ?? 0}
+                groupDraggedCastId={groupDrag?.draggedCastId ?? null}
+                selectedEventIds={selectedEventIds}
+                selectedAnnotationIds={selectedAnnotationIds}
                 draggingEventPosition={draggingEventPosition}
                 scrollLeft={clampedScrollLeft}
                 scrollTop={clampedScrollTop}
@@ -1548,6 +2028,7 @@ export default function TimelineCanvas({ width, height }: TimelineCanvasProps) {
                     trackHeight={skillTrackHeight}
                     skillTracksHeight={skillTracksHeight}
                     annotations={skillTrackAnnotations}
+                    damageEvents={filteredDamageEvents}
                   />
                 }
                 onSelectCastEvent={handleSelectCastEvent}
@@ -1567,8 +2048,17 @@ export default function TimelineCanvas({ width, height }: TimelineCanvasProps) {
                 onAnnotationDragStart={handleAnnotationDragStart}
                 onAnnotationDragEnd={handleAnnotationDragEnd}
                 peerDraggingIds={peerDraggingIds}
-                onCastDragStart={reportCastDragStart}
-                onCastDragMove={reportCastDrag}
+                onCastDragStart={castEventId => {
+                  reportCastDragStart(castEventId)
+                  const ce = useTimelineStore
+                    .getState()
+                    .timeline?.castEvents.find(c => c.id === castEventId)
+                  if (ce) tryBeginGroupDrag('cast', castEventId, ce.timestamp * zoomLevel)
+                }}
+                onCastDragMove={(castEventId, x) => {
+                  reportCastDrag(castEventId, x)
+                  updateGroupDrag(x)
+                }}
                 onAnnotationDragMove={reportAnnotationDrag}
               />
             </Stage>
@@ -1598,19 +2088,31 @@ export default function TimelineCanvas({ width, height }: TimelineCanvasProps) {
       {/* 右键上下文菜单 */}
       <TimelineContextMenu
         menu={contextMenu}
-        clipboard={clipboard}
         isReadOnly={isReadOnly}
         onClose={handleContextMenuClose}
         onDeleteCast={removeCastEvent}
         onAddCast={handleContextMenuAddCast}
         onCopyDamageEventText={handleCopyDamageEventText}
-        onCopyDamageEvent={handleContextMenuCopyDamageEvent}
+        onCopyDamageEvent={() => void copySelection()}
         onDeleteDamageEvent={removeDamageEvent}
         onAddDamageEvent={handleContextMenuAddDamageEvent}
-        onPasteDamageEvent={handleContextMenuPasteDamageEvent}
         onAddAnnotation={handleAddAnnotation}
         onEditAnnotation={handleEditAnnotation}
         onDeleteAnnotation={handleDeleteAnnotation}
+        onCopySelection={() => void copySelection()}
+        onDeleteSelection={() => useTimelineStore.getState().bulkDeleteSelection()}
+        pasteAvailable={pasteAvailable}
+        onPasteSelection={t => void pasteAtTime(t)}
+        onSelectAll={selectAll}
+      />
+
+      <PasteConfirmDialog
+        pending={pendingPaste}
+        onConfirm={() => {
+          if (pendingPaste) commitPaste(pendingPaste)
+          setPendingPaste(null)
+        }}
+        onCancel={() => setPendingPaste(null)}
       />
 
       {/* 注释悬浮查看（pointer-events: none，通过 CSS 变量实时跟随滚动） */}

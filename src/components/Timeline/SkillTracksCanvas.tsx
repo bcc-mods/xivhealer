@@ -38,7 +38,15 @@ interface SkillTracksCanvasProps {
   timelineWidth: number
   trackHeight: number
   maxTime: number
-  selectedCastEventId: string | null
+  selectedCastEventIds: string[]
+  /** 多选群组拖动的 x 偏移（像素），0 表示无 */
+  groupDragDelta?: number
+  /** 群组拖动的「抓手」cast id（其图标由 Konva 自身驱动，不重复施加偏移） */
+  groupDraggedCastId?: string | null
+  /** 选中的伤害事件 id（群组拖动时其红色竖线随同偏移） */
+  selectedEventIds?: string[]
+  /** 选中的注释 id（群组拖动时随同偏移） */
+  selectedAnnotationIds?: string[]
   draggingEventPosition: { eventId: string; x: number } | null
   scrollLeft: number
   scrollTop: number
@@ -100,7 +108,11 @@ export default function SkillTracksCanvas({
   timelineWidth,
   trackHeight,
   maxTime,
-  selectedCastEventId,
+  selectedCastEventIds,
+  groupDragDelta = 0,
+  groupDraggedCastId = null,
+  selectedEventIds = [],
+  selectedAnnotationIds = [],
   draggingEventPosition,
   scrollLeft,
   scrollTop,
@@ -370,14 +382,16 @@ export default function SkillTracksCanvas({
             const x =
               draggingEventPosition?.eventId === event.id
                 ? draggingEventPosition.x
-                : event.time * zoomLevel
+                : event.time * zoomLevel +
+                  (selectedEventIds.includes(event.id) ? groupDragDelta : 0)
             return x >= visibleMinX && x <= visibleMaxX
           })
           .map(event => {
             const x =
               draggingEventPosition?.eventId === event.id
                 ? draggingEventPosition.x
-                : event.time * zoomLevel
+                : event.time * zoomLevel +
+                  (selectedEventIds.includes(event.id) ? groupDragDelta : 0)
 
             return (
               <Line
@@ -555,13 +569,16 @@ export default function SkillTracksCanvas({
           const action = actions.find(a => a.id === castEvent.actionId)
           if (!action) return null
 
-          // 视口裁剪：跳过完全不可见的 castEvent（考虑 cooldown 条宽度）
-          const castX = castEvent.timestamp * zoomLevel
+          // 视口裁剪：跳过完全不可见的 castEvent（考虑 cooldown 条宽度）。
+          // 用群组拖动后的有效 x，否则被拖入视口的选中 cast 会被误裁剪。
+          const castX =
+            castEvent.timestamp * zoomLevel +
+            (selectedCastEventIds.includes(castEvent.id) ? groupDragDelta : 0)
           const cooldownWidth = action.cooldown * zoomLevel
           if (castX + cooldownWidth < visibleMinX || castX > visibleMaxX) return null
 
           const trackY = trackIndex * trackHeight + trackHeight / 2
-          const isSelected = castEvent.id === selectedCastEventId
+          const isSelected = selectedCastEventIds.includes(castEvent.id)
 
           const displayAction = displayActionOverrides.get(castEvent.id)
 
@@ -618,6 +635,7 @@ export default function SkillTracksCanvas({
               invalidReason={invalidEntry?.reason ?? null}
               invalidResourceId={invalidEntry?.resourceId ?? null}
               isSelected={isSelected}
+              dragOffsetX={isSelected && castEvent.id !== groupDraggedCastId ? groupDragDelta : 0}
               zoomLevel={zoomLevel}
               trackY={trackY}
               leftBoundary={leftBoundary}
@@ -634,7 +652,8 @@ export default function SkillTracksCanvas({
               onDragEnd={x => onUpdateCastEvent(castEvent.id, x)}
               onContextMenu={e => {
                 e.evt.preventDefault()
-                if (isReadOnly) return
+                // 只读模式也要派发：命中多选时 handleContextMenu 会弹「复制」批量菜单；
+                // 单个 cast 在只读下由 TimelineContextMenu 渲染为 null（无可见菜单）。
                 onContextMenu(
                   { type: 'castEvent', castEventId: castEvent.id, actionId: castEvent.actionId },
                   e.evt.clientX,
@@ -681,6 +700,7 @@ export default function SkillTracksCanvas({
               <AnnotationIcon
                 key={`annotation-${annotation.id}`}
                 x={x}
+                dragOffsetX={selectedAnnotationIds.includes(annotation.id) ? groupDragDelta : 0}
                 isPinned={pinnedAnnotationId === annotation.id}
                 draggable={!isReadOnly && pinnedAnnotationId === annotation.id}
                 onDragStart={() => onAnnotationDragStart(annotation.id)}

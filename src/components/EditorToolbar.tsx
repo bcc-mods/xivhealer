@@ -16,6 +16,8 @@ import {
   Eye,
   FileInput,
   FileOutput,
+  Hand,
+  BoxSelect,
 } from 'lucide-react'
 import { useTimelineStore } from '@/store/timelineStore'
 import { useUIStore } from '@/store/uiStore'
@@ -101,6 +103,8 @@ export default function EditorToolbar({
     toggleShowOriginalDamage,
     enableHpSimulation,
     toggleEnableHpSimulation,
+    canvasTool,
+    setCanvasTool,
   } = useUIStore()
   const [showExitReplayConfirm, setShowExitReplayConfirm] = useState(false)
   const [showStatDataDialog, setShowStatDataDialog] = useState(false)
@@ -175,6 +179,42 @@ export default function EditorToolbar({
               />
               <ZoomIn className="w-4 h-4 text-muted-foreground shrink-0" />
             </div>
+
+            {/* 平移 / 框选 工具切换（仅时间轴视图；只读/回放也可切换以便选中、复制） */}
+            {viewMode !== 'table' && (
+              <div className="flex items-center gap-0.5 rounded-md border border-border bg-muted/40 p-0.5">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant={canvasTool === 'pan' ? 'default' : 'ghost'}
+                      size="icon"
+                      className="h-6 w-6"
+                      aria-pressed={canvasTool === 'pan'}
+                      aria-label="抓手"
+                      onClick={() => setCanvasTool('pan')}
+                    >
+                      <Hand className="w-4 h-4" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">抓手</TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant={canvasTool === 'select' ? 'default' : 'ghost'}
+                      size="icon"
+                      className="h-6 w-6"
+                      aria-pressed={canvasTool === 'select'}
+                      aria-label="框选"
+                      onClick={() => setCanvasTool('select')}
+                    >
+                      <BoxSelect className="w-4 h-4" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">框选</TooltipContent>
+                </Tooltip>
+              </div>
+            )}
 
             <div className="w-px h-6 bg-border mx-1" />
 

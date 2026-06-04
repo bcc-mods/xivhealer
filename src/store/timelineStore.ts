@@ -13,6 +13,7 @@
  */
 
 import { create } from 'zustand'
+import { TIMELINE_START_TIME } from '@/components/Timeline/constants'
 import { toast } from 'sonner'
 import { useUIStore } from '@/store/uiStore'
 import type {
@@ -60,6 +61,13 @@ function replaceStatData(doc: YDoc, statData: TimelineStatData): void {
   yReplaceStatData(doc, statData as unknown as Record<string, unknown>)
 }
 
+export type SelectionKind = 'damage' | 'cast' | 'annotation'
+export interface SelectionPatch {
+  eventIds?: string[]
+  castEventIds?: string[]
+  annotationIds?: string[]
+}
+
 interface TimelineState {
   /** 同步引擎(持有 Y.Doc 真相源);未打开时间轴时为 null */
   engine: SyncEngine | null
@@ -83,6 +91,12 @@ interface TimelineState {
   selectedEventId: string | null
   /** 选中的技能使用事件 ID */
   selectedCastEventId: string | null
+  /** 选中的伤害事件 ID 列表（多选真相源） */
+  selectedEventIds: string[]
+  /** 选中的技能使用事件 ID 列表 */
+  selectedCastEventIds: string[]
+  /** 选中的注释 ID 列表 */
+  selectedAnnotationIds: string[]
   /** 当前播放时间 (秒) */
   currentTime: number
   /** 缩放级别 (像素/秒) */
@@ -135,6 +149,14 @@ interface TimelineState {
   selectEvent: (eventId: string | null) => void
   /** 选择技能使用事件 */
   selectCastEvent: (castEventId: string | null) => void
+  /** 整组替换选择 */
+  setSelection: (sel: SelectionPatch) => void
+  /** 与现有选择求并集（Shift 框选） */
+  addToSelection: (sel: SelectionPatch) => void
+  /** 切换单个对象选中态（Ctrl/Cmd 点击） */
+  toggleSelection: (kind: SelectionKind, id: string) => void
+  /** 清空全部选择 */
+  clearSelection: () => void
   /** 设置当前时间 */
   setCurrentTime: (time: number) => void
   /** 设置缩放级别 */
@@ -169,11 +191,21 @@ interface TimelineState {
   updateAnnotation: (id: string, updates: Partial<Pick<Annotation, 'text' | 'time'>>) => void
   /** 删除注释 */
   removeAnnotation: (id: string) => void
+  /** 批量平移选中对象的时间（同一事务，单步 undo） */
+  bulkMoveSelection: (delta: number) => void
+  /** 批量删除选中对象（同一事务，单步 undo），随后清空选择 */
+  bulkDeleteSelection: () => void
   /** 批量导入：单个 Y.Doc 事务包裹所有写入，UndoManager 视为一步 */
   bulkImport: (data: {
     damageEvents?: DamageEvent[]
     castEvents?: CastEvent[]
     syncEvents?: SyncEvent[]
+  }) => void
+  /** 批量粘贴：以新 id 写入三类对象（单事务），并选中新对象 */
+  pasteObjects: (objs: {
+    damageEvents: Omit<DamageEvent, 'id'>[]
+    castEvents: Omit<CastEvent, 'id'>[]
+    annotations: Omit<Annotation, 'id'>[]
   }) => void
   /** 解除回放模式（不可撤销） */
   exitReplayMode: () => void
@@ -191,6 +223,8 @@ interface TimelineState {
   setLocalCursor: (time: number | null) => void
   /** 设本地拖动 ghost;拖动结束传 null */
   setLocalDragging: (dragging: AwarenessState['dragging']) => void
+  /** 设本地群组拖动随动 id 列表;非群组拖动 / 结束传空数组 */
+  setLocalDragGroup: (dragGroup: AwarenessState['dragGroup']) => void
 }
 
 /** UI 态 / 运行时态初值(不含 engine / timeline) */
@@ -199,6 +233,9 @@ const initialUiState = {
   statistics: null,
   selectedEventId: null,
   selectedCastEventId: null,
+  selectedEventIds: [],
+  selectedCastEventIds: [],
+  selectedAnnotationIds: [],
   currentTime: 0,
   zoomLevel: 30, // xx 像素 / 秒
   pendingScrollProgress: null,
@@ -210,6 +247,19 @@ const initialUiState = {
   isPublished: false,
   sessionRole: 'local' as const,
   peers: [] as PeerState[],
+}
+
+/** 由多选数组派生旧的单选字段：仅当总选中数==1 且为该类型时给出 id */
+function deriveSingle(sel: {
+  eventIds: string[]
+  castEventIds: string[]
+  annotationIds: string[]
+}) {
+  const total = sel.eventIds.length + sel.castEventIds.length + sel.annotationIds.length
+  return {
+    selectedEventId: total === 1 && sel.eventIds.length === 1 ? sel.eventIds[0] : null,
+    selectedCastEventId: total === 1 && sel.castEventIds.length === 1 ? sel.castEventIds[0] : null,
+  }
 }
 
 export const useTimelineStore = create<TimelineState>()((set, get) => {
@@ -283,9 +333,10 @@ export const useTimelineStore = create<TimelineState>()((set, get) => {
       peers.push({
         clientId,
         user: s.user,
-        selection: s.selection ?? { eventId: null, castEventId: null },
+        selection: s.selection ?? { eventIds: [], castEventIds: [], annotationIds: [] },
         cursorTime: s.cursorTime ?? null,
         dragging: s.dragging ?? null,
+        dragGroup: s.dragGroup ?? { eventIds: [], castEventIds: [], annotationIds: [] },
       })
     }
     set({ peers })
@@ -320,9 +371,18 @@ export const useTimelineStore = create<TimelineState>()((set, get) => {
     )
     // 本地 awareness 不设 user —— 由服务端按 JWT 身份在广播帧注入(省上行 + 防伪)。
     // 仅初始化动态字段,并订阅 peers 变化。
-    engine.awareness.setLocalStateField('selection', { eventId: null, castEventId: null })
+    engine.awareness.setLocalStateField('selection', {
+      eventIds: [],
+      castEventIds: [],
+      annotationIds: [],
+    })
     engine.awareness.setLocalStateField('cursorTime', null)
     engine.awareness.setLocalStateField('dragging', null)
+    engine.awareness.setLocalStateField('dragGroup', {
+      eventIds: [],
+      castEventIds: [],
+      annotationIds: [],
+    })
     const onPeersChange = () => reprojectPeers(engine)
     engine.awareness.on('change', onPeersChange)
     peersUnsub = () => engine.awareness.off('change', onPeersChange)
@@ -359,6 +419,9 @@ export const useTimelineStore = create<TimelineState>()((set, get) => {
         yDocReady: false,
         selectedEventId: null,
         selectedCastEventId: null,
+        selectedEventIds: [],
+        selectedCastEventIds: [],
+        selectedAnnotationIds: [],
         canUndo: false,
         canRedo: false,
         connectionStatus: 'disconnected',
@@ -453,6 +516,9 @@ export const useTimelineStore = create<TimelineState>()((set, get) => {
         canRedo: false,
         selectedEventId: null,
         selectedCastEventId: null,
+        selectedEventIds: [],
+        selectedCastEventIds: [],
+        selectedAnnotationIds: [],
         peers: [],
       })
       recomputeTimeline()
@@ -533,14 +599,62 @@ export const useTimelineStore = create<TimelineState>()((set, get) => {
       set({ partyState: newPartyState })
     },
 
+    setSelection: sel => {
+      const next = {
+        eventIds: sel.eventIds ?? [],
+        castEventIds: sel.castEventIds ?? [],
+        annotationIds: sel.annotationIds ?? [],
+      }
+      set({
+        selectedEventIds: next.eventIds,
+        selectedCastEventIds: next.castEventIds,
+        selectedAnnotationIds: next.annotationIds,
+        ...deriveSingle(next),
+      })
+      get().engine?.awareness.setLocalStateField('selection', next)
+    },
+
+    addToSelection: sel => {
+      const s = get()
+      get().setSelection({
+        eventIds: [...new Set([...s.selectedEventIds, ...(sel.eventIds ?? [])])],
+        castEventIds: [...new Set([...s.selectedCastEventIds, ...(sel.castEventIds ?? [])])],
+        annotationIds: [...new Set([...s.selectedAnnotationIds, ...(sel.annotationIds ?? [])])],
+      })
+    },
+
+    toggleSelection: (kind, id) => {
+      const s = get()
+      const key =
+        kind === 'damage'
+          ? 'selectedEventIds'
+          : kind === 'cast'
+            ? 'selectedCastEventIds'
+            : 'selectedAnnotationIds'
+      const cur = s[key]
+      const nextArr = cur.includes(id) ? cur.filter(x => x !== id) : [...cur, id]
+      get().setSelection({
+        eventIds: s.selectedEventIds,
+        castEventIds: s.selectedCastEventIds,
+        annotationIds: s.selectedAnnotationIds,
+        [key === 'selectedEventIds'
+          ? 'eventIds'
+          : key === 'selectedCastEventIds'
+            ? 'castEventIds'
+            : 'annotationIds']: nextArr,
+      })
+    },
+
+    clearSelection: () => get().setSelection({}),
+
     selectEvent: eventId => {
-      set({ selectedEventId: eventId, selectedCastEventId: null })
-      get().engine?.awareness.setLocalStateField('selection', { eventId, castEventId: null })
+      if (eventId == null) get().clearSelection()
+      else get().setSelection({ eventIds: [eventId] })
     },
 
     selectCastEvent: castEventId => {
-      set({ selectedCastEventId: castEventId, selectedEventId: null })
-      get().engine?.awareness.setLocalStateField('selection', { eventId: null, castEventId })
+      if (castEventId == null) get().clearSelection()
+      else get().setSelection({ castEventIds: [castEventId] })
     },
 
     setCurrentTime: time =>
@@ -634,7 +748,13 @@ export const useTimelineStore = create<TimelineState>()((set, get) => {
       const engine = get().engine
       if (!engine) return
       yRemoveDamageEvent(engine.doc, eventId)
-      if (get().selectedEventId === eventId) set({ selectedEventId: null })
+      if (get().selectedEventIds.includes(eventId)) {
+        get().setSelection({
+          eventIds: get().selectedEventIds.filter(x => x !== eventId),
+          castEventIds: get().selectedCastEventIds,
+          annotationIds: get().selectedAnnotationIds,
+        })
+      }
     },
 
     addCastEvent: castEvent => {
@@ -653,7 +773,13 @@ export const useTimelineStore = create<TimelineState>()((set, get) => {
       const engine = get().engine
       if (!engine) return
       yRemoveCastEvent(engine.doc, castEventId)
-      if (get().selectedCastEventId === castEventId) set({ selectedCastEventId: null })
+      if (get().selectedCastEventIds.includes(castEventId)) {
+        get().setSelection({
+          eventIds: get().selectedEventIds,
+          castEventIds: get().selectedCastEventIds.filter(x => x !== castEventId),
+          annotationIds: get().selectedAnnotationIds,
+        })
+      }
     },
 
     addAnnotation: annotation => {
@@ -672,6 +798,67 @@ export const useTimelineStore = create<TimelineState>()((set, get) => {
       const engine = get().engine
       if (!engine) return
       yRemoveAnnotation(engine.doc, id)
+      if (get().selectedAnnotationIds.includes(id)) {
+        get().setSelection({
+          eventIds: get().selectedEventIds,
+          castEventIds: get().selectedCastEventIds,
+          annotationIds: get().selectedAnnotationIds.filter(x => x !== id),
+        })
+      }
+    },
+
+    bulkMoveSelection: delta => {
+      const engine = get().engine
+      const tl = get().timeline
+      if (!engine || !tl || delta === 0) return
+      const { selectedEventIds, selectedCastEventIds, selectedAnnotationIds } = get()
+      if (
+        selectedEventIds.length === 0 &&
+        selectedCastEventIds.length === 0 &&
+        selectedAnnotationIds.length === 0
+      )
+        return
+      const dmg = new Map(tl.damageEvents.map(e => [e.id, e]))
+      const cast = new Map(tl.castEvents.map(c => [c.id, c]))
+      const ann = new Map((tl.annotations ?? []).map(a => [a.id, a]))
+      engine.doc.transact(() => {
+        for (const id of selectedEventIds) {
+          const e = dmg.get(id)
+          if (e) yUpdateDamageEvent(engine.doc, id, { time: Math.max(0, e.time + delta) })
+        }
+        for (const id of selectedCastEventIds) {
+          const c = cast.get(id)
+          if (c)
+            yUpdateCastEvent(engine.doc, id, {
+              timestamp: Math.max(TIMELINE_START_TIME, c.timestamp + delta),
+            })
+        }
+        for (const id of selectedAnnotationIds) {
+          const a = ann.get(id)
+          if (a)
+            yUpdateAnnotation(engine.doc, id, {
+              time: Math.max(TIMELINE_START_TIME, a.time + delta),
+            })
+        }
+      }, LOCAL_ORIGIN)
+    },
+
+    bulkDeleteSelection: () => {
+      const engine = get().engine
+      if (!engine) return
+      const { selectedEventIds, selectedCastEventIds, selectedAnnotationIds } = get()
+      if (
+        selectedEventIds.length === 0 &&
+        selectedCastEventIds.length === 0 &&
+        selectedAnnotationIds.length === 0
+      )
+        return
+      engine.doc.transact(() => {
+        for (const id of selectedEventIds) yRemoveDamageEvent(engine.doc, id)
+        for (const id of selectedCastEventIds) yRemoveCastEvent(engine.doc, id)
+        for (const id of selectedAnnotationIds) yRemoveAnnotation(engine.doc, id)
+      }, LOCAL_ORIGIN)
+      get().clearSelection()
     },
 
     bulkImport: data => {
@@ -702,6 +889,32 @@ export const useTimelineStore = create<TimelineState>()((set, get) => {
           ySetMeta(engine.doc, { syncEvents: merged })
         }
       }, LOCAL_ORIGIN)
+    },
+
+    pasteObjects: objs => {
+      const engine = get().engine
+      if (!engine) return
+      const eventIds: string[] = []
+      const castEventIds: string[] = []
+      const annotationIds: string[] = []
+      engine.doc.transact(() => {
+        for (const e of objs.damageEvents) {
+          const id = generateId()
+          yAddDamageEvent(engine.doc, { ...e, id })
+          eventIds.push(id)
+        }
+        for (const c of objs.castEvents) {
+          const id = generateId()
+          yAddCastEvent(engine.doc, { ...c, id })
+          castEventIds.push(id)
+        }
+        for (const a of objs.annotations) {
+          const id = generateId()
+          yAddAnnotation(engine.doc, { ...a, id })
+          annotationIds.push(id)
+        }
+      }, LOCAL_ORIGIN)
+      get().setSelection({ eventIds, castEventIds, annotationIds })
     },
 
     updateStatData: statData => {
@@ -753,6 +966,12 @@ export const useTimelineStore = create<TimelineState>()((set, get) => {
       const engine = get().engine
       if (!engine) return
       engine.awareness.setLocalStateField('dragging', dragging)
+    },
+
+    setLocalDragGroup: dragGroup => {
+      const engine = get().engine
+      if (!engine) return
+      engine.awareness.setLocalStateField('dragGroup', dragGroup)
     },
 
     reset: () => {

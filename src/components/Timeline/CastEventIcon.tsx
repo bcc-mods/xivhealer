@@ -22,6 +22,8 @@ interface CastEventIconProps {
   invalidResourceId?: string | null
   isSelected: boolean
   zoomLevel: number
+  /** 多选群组拖动期间的 x 偏移（像素）；其余时间为 0 */
+  dragOffsetX?: number
   trackY: number
   leftBoundary: number
   rightBoundary: number
@@ -54,6 +56,7 @@ const CastEventIcon = memo(function CastEventIcon({
   invalidReason = null,
   isSelected,
   zoomLevel,
+  dragOffsetX = 0,
   trackY,
   leftBoundary,
   rightBoundary,
@@ -74,7 +77,7 @@ const CastEventIcon = memo(function CastEventIcon({
 }: CastEventIconProps) {
   const [isHovered, setIsHovered] = useState(false)
   const dragStartAbsYRef = useRef<number | null>(null)
-  const x = castEvent.timestamp * zoomLevel // timestamp 已经是秒
+  const x = castEvent.timestamp * zoomLevel + dragOffsetX // timestamp 已经是秒
   const effectiveDuration = Math.max(0, effectiveEndSec - castEvent.timestamp)
 
   // 蓝条几何
@@ -105,6 +108,7 @@ const CastEventIcon = memo(function CastEventIcon({
 
   return (
     <Group
+      name="tlObject"
       x={x}
       y={trackY}
       draggable={isSelected && !isReadOnly}
@@ -124,7 +128,11 @@ const CastEventIcon = memo(function CastEventIcon({
           y: lockedY,
         }
       }}
-      onClick={onSelect}
+      onClick={e => {
+        // 右键不触发选中：避免在 onContextMenu 前把多选塌缩成单个，
+        // 右键的选区 / 菜单逻辑统一由 handleContextMenu 处理
+        if (e.evt.button !== 2) onSelect()
+      }}
       onTap={onSelect}
       onDragMove={e => {
         onDragMove?.(e.target.x())

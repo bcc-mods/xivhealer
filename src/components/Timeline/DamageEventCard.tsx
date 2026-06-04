@@ -35,6 +35,8 @@ interface DamageEventCardProps {
   rowHeight: number
   row: number
   yOffset: number
+  /** 多选群组拖动期间的 x 偏移（像素）；其余时间为 0 */
+  dragOffsetX?: number
   onSelect: () => void
   onDragStart: () => void
   onDragMove: (x: number) => void
@@ -50,6 +52,7 @@ const DamageEventCard = memo(function DamageEventCard({
   rowHeight,
   row,
   yOffset,
+  dragOffsetX = 0,
   onSelect,
   onDragStart,
   onDragMove,
@@ -64,7 +67,7 @@ const DamageEventCard = memo(function DamageEventCard({
   const calculationResults = useDamageCalculationResults()
   const calculatedEvent = calculationResults.get(event.id)
   const isTankOnly = event.type === 'tankbuster' || event.type === 'auto'
-  const x = event.time * zoomLevel
+  const x = event.time * zoomLevel + dragOffsetX
   const y = yOffset + row * rowHeight + rowHeight / 2
 
   const isDark = colors.cardBg !== '#ffffff'
@@ -125,6 +128,7 @@ const DamageEventCard = memo(function DamageEventCard({
 
   return (
     <Group
+      name="tlObject"
       x={x}
       y={y}
       draggable={isSelected && !isReadOnly}
@@ -132,7 +136,11 @@ const DamageEventCard = memo(function DamageEventCard({
         x: pos.x,
         y: y,
       })}
-      onClick={onSelect}
+      onClick={e => {
+        // 右键不触发选中：右键的选区 / 菜单逻辑统一由 handleContextMenu 处理，
+        // 避免在 onContextMenu 前把多选塌缩成单个
+        if (e.evt.button !== 2) onSelect()
+      }}
       onTap={onSelect}
       onMouseEnter={e => {
         const stage = e.target.getStage()

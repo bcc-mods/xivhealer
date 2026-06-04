@@ -12,6 +12,8 @@ interface AnnotationIconProps {
   y: number
   isPinned?: boolean
   draggable?: boolean
+  /** 多选群组拖动期间的 x 偏移（像素）；其余时间为 0 */
+  dragOffsetX?: number
   onMouseEnter: (e: KonvaEventObject<MouseEvent>) => void
   onMouseLeave: () => void
   onClick: (e: KonvaEventObject<MouseEvent>) => void
@@ -30,6 +32,7 @@ export default function AnnotationIcon({
   y,
   isPinned = false,
   draggable = false,
+  dragOffsetX = 0,
   onMouseEnter,
   onMouseLeave,
   onClick,
@@ -43,7 +46,8 @@ export default function AnnotationIcon({
 
   return (
     <Group
-      x={x - ICON_SIZE / 2}
+      name="tlObject"
+      x={x - ICON_SIZE / 2 + dragOffsetX}
       y={y - ICON_SIZE / 2}
       scaleX={SCALE}
       scaleY={SCALE}

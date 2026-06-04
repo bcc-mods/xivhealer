@@ -11,7 +11,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { MousePointerClick } from 'lucide-react'
-import type { DamageEvent, AnnotationAnchor } from '@/types/timeline'
+import type { AnnotationAnchor } from '@/types/timeline'
 import { modKey, deleteKeyLabel } from '@/utils/platform'
 
 export type ContextMenuState =
@@ -51,12 +51,16 @@ export type ContextMenuState =
       type: 'annotation'
       annotationId: string
     }
-
-export type DamageEventClipboard = Omit<DamageEvent, 'id' | 'time'> | null
+  | {
+      x: number
+      y: number
+      time: number
+      type: 'multiSelection'
+      count: number
+    }
 
 interface TimelineContextMenuProps {
   menu: ContextMenuState | null
-  clipboard: DamageEventClipboard
   isReadOnly: boolean
   onClose: () => void
   onDeleteCast: (castEventId: string) => void
@@ -65,15 +69,20 @@ interface TimelineContextMenuProps {
   onCopyDamageEvent: (eventId: string) => void
   onDeleteDamageEvent: (eventId: string) => void
   onAddDamageEvent: (time: number) => void
-  onPasteDamageEvent: (time: number) => void
   onAddAnnotation: (time: number, anchor: AnnotationAnchor) => void
   onEditAnnotation: (annotationId: string) => void
   onDeleteAnnotation: (annotationId: string) => void
+  onCopySelection?: () => void
+  onDeleteSelection: () => void
+  /** 粘贴可用性：'checking' | true | false；控制空白菜单粘贴项 */
+  pasteAvailable?: 'checking' | boolean
+  onPasteSelection?: (time: number) => void
+  /** 全选时间轴所有对象（空白处菜单项） */
+  onSelectAll?: () => void
 }
 
 export default function TimelineContextMenu({
   menu,
-  clipboard,
   isReadOnly,
   onClose,
   onDeleteCast,
@@ -82,15 +91,19 @@ export default function TimelineContextMenu({
   onCopyDamageEvent,
   onDeleteDamageEvent,
   onAddDamageEvent,
-  onPasteDamageEvent,
   onAddAnnotation,
   onEditAnnotation,
   onDeleteAnnotation,
+  onCopySelection,
+  onDeleteSelection,
+  pasteAvailable,
+  onPasteSelection,
+  onSelectAll,
 }: TimelineContextMenuProps) {
   if (!menu) return null
 
-  // 只读模式下，只有伤害事件有可用菜单项（复制文本、复制）
-  if (isReadOnly && menu.type !== 'damageEvent') return null
+  // 只读模式下仅保留可读操作的菜单：伤害事件（复制文本/复制）与多选（复制）
+  if (isReadOnly && menu.type !== 'damageEvent' && menu.type !== 'multiSelection') return null
 
   const handleOpenChange = (open: boolean) => {
     if (!open) onClose()
@@ -118,6 +131,32 @@ export default function TimelineContextMenu({
           </DropdownMenuItem>
         )}
 
+        {menu.type === 'multiSelection' && (
+          <>
+            <DropdownMenuItem
+              onClick={() => {
+                onCopySelection?.()
+                onClose()
+              }}
+            >
+              复制全部
+              <DropdownMenuShortcut>{modKey}C</DropdownMenuShortcut>
+            </DropdownMenuItem>
+            {!isReadOnly && (
+              <DropdownMenuItem
+                className="text-destructive focus:text-destructive"
+                onClick={() => {
+                  onDeleteSelection()
+                  onClose()
+                }}
+              >
+                删除全部
+                <DropdownMenuShortcut>{deleteKeyLabel}</DropdownMenuShortcut>
+              </DropdownMenuItem>
+            )}
+          </>
+        )}
+
         {menu.type === 'skillTrackEmpty' && (
           <>
             <DropdownMenuItem
@@ -143,6 +182,32 @@ export default function TimelineContextMenu({
             >
               添加注释
             </DropdownMenuItem>
+            {onPasteSelection && (
+              <DropdownMenuItem
+                disabled={pasteAvailable !== true}
+                onClick={() => {
+                  onPasteSelection(menu.time)
+                  onClose()
+                }}
+              >
+                粘贴{pasteAvailable === 'checking' ? '…' : ''}
+                <DropdownMenuShortcut>{modKey}V</DropdownMenuShortcut>
+              </DropdownMenuItem>
+            )}
+            {onSelectAll && (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  onClick={() => {
+                    onSelectAll()
+                    onClose()
+                  }}
+                >
+                  全选
+                  <DropdownMenuShortcut>{modKey}A</DropdownMenuShortcut>
+                </DropdownMenuItem>
+              </>
+            )}
           </>
         )}
 
@@ -197,17 +262,6 @@ export default function TimelineContextMenu({
                 <MousePointerClick className="size-3" />
               </DropdownMenuShortcut>
             </DropdownMenuItem>
-            {clipboard && (
-              <DropdownMenuItem
-                onClick={() => {
-                  onPasteDamageEvent(menu.time)
-                  onClose()
-                }}
-              >
-                粘贴
-                <DropdownMenuShortcut>{modKey}V</DropdownMenuShortcut>
-              </DropdownMenuItem>
-            )}
             <DropdownMenuItem
               onClick={() => {
                 onAddAnnotation(menu.time, { type: 'damageTrack' })
@@ -216,6 +270,32 @@ export default function TimelineContextMenu({
             >
               添加注释
             </DropdownMenuItem>
+            {onPasteSelection && (
+              <DropdownMenuItem
+                disabled={pasteAvailable !== true}
+                onClick={() => {
+                  onPasteSelection(menu.time)
+                  onClose()
+                }}
+              >
+                粘贴{pasteAvailable === 'checking' ? '…' : ''}
+                <DropdownMenuShortcut>{modKey}V</DropdownMenuShortcut>
+              </DropdownMenuItem>
+            )}
+            {onSelectAll && (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  onClick={() => {
+                    onSelectAll()
+                    onClose()
+                  }}
+                >
+                  全选
+                  <DropdownMenuShortcut>{modKey}A</DropdownMenuShortcut>
+                </DropdownMenuItem>
+              </>
+            )}
           </>
         )}
         {menu.type === 'annotation' && (

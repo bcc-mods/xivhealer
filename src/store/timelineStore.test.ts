@@ -813,3 +813,208 @@ describe('bulkImport', () => {
     expect(sync.map(s => s.time)).toEqual([5, 10])
   })
 })
+
+const seedWithItems: TimelineContent = {
+  ...baseContent,
+  damageEvents: [
+    { id: 'd1', name: 'AA', time: 10, damage: 1000, type: 'aoe', damageType: 'magical' },
+  ],
+  castEvents: [{ id: 'c1', actionId: 16536, timestamp: 12, playerId: 2 }],
+  annotations: [{ id: 'a1', text: '注', time: 14, anchor: { type: 'damageTrack' } }],
+}
+
+describe('bulkMoveSelection', () => {
+  beforeEach(async () => {
+    // eslint-disable-next-line no-global-assign
+    indexedDB = new IDBFactory()
+    await useTimelineStore
+      .getState()
+      .openTimeline('move-test', { role: 'local', seedContent: seedWithItems })
+  })
+
+  afterEach(() => {
+    useTimelineStore.getState().reset()
+  })
+
+  it('对全部选中对象施加同一 delta，下界夹紧', () => {
+    const store = useTimelineStore.getState()
+    store.setSelection({ eventIds: ['d1'], castEventIds: ['c1'], annotationIds: ['a1'] })
+    store.bulkMoveSelection(5)
+    const tl = useTimelineStore.getState().timeline!
+    expect(tl.damageEvents.find(e => e.id === 'd1')!.time).toBe(15)
+    expect(tl.castEvents.find(c => c.id === 'c1')!.timestamp).toBe(17)
+    expect(tl.annotations!.find(a => a.id === 'a1')!.time).toBe(19)
+  })
+
+  it('伤害事件下界为 0', () => {
+    const store = useTimelineStore.getState()
+    store.setSelection({ eventIds: ['d1'] })
+    store.bulkMoveSelection(-1000)
+    expect(useTimelineStore.getState().timeline!.damageEvents.find(e => e.id === 'd1')!.time).toBe(
+      0
+    )
+  })
+
+  it('一次移动只产生一步 undo', () => {
+    const store = useTimelineStore.getState()
+    store.setSelection({ eventIds: ['d1'], castEventIds: ['c1'] })
+    store.bulkMoveSelection(3)
+    store.undo()
+    const tl = useTimelineStore.getState().timeline!
+    expect(tl.damageEvents.find(e => e.id === 'd1')!.time).toBe(10)
+    expect(tl.castEvents.find(c => c.id === 'c1')!.timestamp).toBe(12)
+  })
+})
+
+describe('bulkDeleteSelection', () => {
+  beforeEach(async () => {
+    // eslint-disable-next-line no-global-assign
+    indexedDB = new IDBFactory()
+    await useTimelineStore
+      .getState()
+      .openTimeline('del-test', { role: 'local', seedContent: seedWithItems })
+  })
+
+  afterEach(() => {
+    useTimelineStore.getState().reset()
+  })
+
+  it('删除全部选中并清空 selection，单步 undo', () => {
+    const store = useTimelineStore.getState()
+    store.setSelection({ eventIds: ['d1'], castEventIds: ['c1'], annotationIds: ['a1'] })
+    store.bulkDeleteSelection()
+    let tl = useTimelineStore.getState().timeline!
+    expect(tl.damageEvents).toHaveLength(0)
+    expect(tl.castEvents).toHaveLength(0)
+    expect(tl.annotations ?? []).toHaveLength(0)
+    expect(useTimelineStore.getState().selectedEventIds).toEqual([])
+
+    store.undo()
+    tl = useTimelineStore.getState().timeline!
+    expect(tl.damageEvents).toHaveLength(1)
+    expect(tl.castEvents).toHaveLength(1)
+  })
+})
+
+describe('多选 selection', () => {
+  beforeEach(async () => {
+    // eslint-disable-next-line no-global-assign
+    indexedDB = new IDBFactory()
+    useTimelineStore.getState().reset()
+    await useTimelineStore.getState().openTimeline('sel-test', {
+      role: 'local',
+      seedContent: baseContent,
+    })
+  })
+
+  it('setSelection 写入数组并派生单选', () => {
+    useTimelineStore.getState().setSelection({ eventIds: ['e1'] })
+    const s = useTimelineStore.getState()
+    expect(s.selectedEventIds).toEqual(['e1'])
+    expect(s.selectedEventId).toBe('e1') // 单选派生
+    expect(s.selectedCastEventId).toBeNull()
+  })
+
+  it('多选时派生单选为 null（面板不弹）', () => {
+    useTimelineStore.getState().setSelection({ eventIds: ['e1', 'e2'] })
+    const s = useTimelineStore.getState()
+    expect(s.selectedEventIds).toEqual(['e1', 'e2'])
+    expect(s.selectedEventId).toBeNull()
+  })
+
+  it('混合类型选中时派生单选为 null', () => {
+    useTimelineStore.getState().setSelection({ eventIds: ['e1'], castEventIds: ['c1'] })
+    expect(useTimelineStore.getState().selectedEventId).toBeNull()
+    expect(useTimelineStore.getState().selectedCastEventId).toBeNull()
+  })
+
+  it('toggleSelection 切换单个对象', () => {
+    useTimelineStore.getState().setSelection({ castEventIds: ['c1'] })
+    useTimelineStore.getState().toggleSelection('cast', 'c2')
+    expect(useTimelineStore.getState().selectedCastEventIds.sort()).toEqual(['c1', 'c2'])
+    useTimelineStore.getState().toggleSelection('cast', 'c1')
+    expect(useTimelineStore.getState().selectedCastEventIds).toEqual(['c2'])
+  })
+
+  it('addToSelection 求并集去重', () => {
+    useTimelineStore.getState().setSelection({ eventIds: ['e1'] })
+    useTimelineStore.getState().addToSelection({ eventIds: ['e1', 'e2'], annotationIds: ['a1'] })
+    const s = useTimelineStore.getState()
+    expect(s.selectedEventIds.sort()).toEqual(['e1', 'e2'])
+    expect(s.selectedAnnotationIds).toEqual(['a1'])
+  })
+
+  it('clearSelection 清空全部', () => {
+    useTimelineStore.getState().setSelection({ eventIds: ['e1'], castEventIds: ['c1'] })
+    useTimelineStore.getState().clearSelection()
+    const s = useTimelineStore.getState()
+    expect(s.selectedEventIds).toEqual([])
+    expect(s.selectedCastEventIds).toEqual([])
+    expect(s.selectedAnnotationIds).toEqual([])
+    expect(s.selectedEventId).toBeNull()
+  })
+
+  it('selectEvent(id) 等价单选；selectEvent(null) 清空', () => {
+    useTimelineStore.getState().selectEvent('e9')
+    expect(useTimelineStore.getState().selectedEventIds).toEqual(['e9'])
+    useTimelineStore.getState().selectEvent(null)
+    expect(useTimelineStore.getState().selectedEventIds).toEqual([])
+  })
+
+  it('removeAnnotation 清理 selectedAnnotationIds', async () => {
+    const seedAnn: TimelineContent = {
+      ...baseContent,
+      annotations: [{ id: 'an1', text: 'n', time: 5, anchor: { type: 'damageTrack' } }],
+    }
+    await useTimelineStore
+      .getState()
+      .openTimeline('ann-rm-test', { role: 'local', seedContent: seedAnn })
+    useTimelineStore.getState().setSelection({ annotationIds: ['an1'] })
+    expect(useTimelineStore.getState().selectedAnnotationIds).toEqual(['an1'])
+    useTimelineStore.getState().removeAnnotation('an1')
+    expect(useTimelineStore.getState().selectedAnnotationIds).toEqual([])
+  })
+
+  it('切换时间轴清空选择数组', async () => {
+    useTimelineStore.getState().setSelection({ eventIds: ['x1', 'x2'] })
+    expect(useTimelineStore.getState().selectedEventIds).toEqual(['x1', 'x2'])
+    await useTimelineStore
+      .getState()
+      .openTimeline('another-tl', { role: 'local', seedContent: baseContent })
+    expect(useTimelineStore.getState().selectedEventIds).toEqual([])
+  })
+})
+
+describe('pasteObjects', () => {
+  beforeEach(async () => {
+    // eslint-disable-next-line no-global-assign
+    indexedDB = new IDBFactory()
+    await useTimelineStore
+      .getState()
+      .openTimeline('paste-test', { role: 'local', seedContent: baseContent })
+  })
+
+  afterEach(() => {
+    useTimelineStore.getState().reset()
+  })
+
+  it('以新 id 写入三类对象并选中它们，单步 undo', () => {
+    const store = useTimelineStore.getState()
+    store.pasteObjects({
+      damageEvents: [{ name: 'X', time: 5, damage: 1, type: 'aoe', damageType: 'magical' }],
+      castEvents: [{ actionId: 16536, timestamp: 6, playerId: 2 }],
+      annotations: [{ text: '注', time: 7, anchor: { type: 'damageTrack' } }],
+    })
+    const s = useTimelineStore.getState()
+    const tl = s.timeline!
+    expect(tl.damageEvents).toHaveLength(1)
+    expect(tl.castEvents).toHaveLength(1)
+    expect(tl.annotations).toHaveLength(1)
+    expect(s.selectedEventIds).toEqual([tl.damageEvents[0].id])
+    expect(s.selectedCastEventIds).toEqual([tl.castEvents[0].id])
+    expect(s.selectedAnnotationIds).toEqual([tl.annotations![0].id])
+
+    store.undo()
+    expect(useTimelineStore.getState().timeline!.damageEvents).toHaveLength(0)
+  })
+})

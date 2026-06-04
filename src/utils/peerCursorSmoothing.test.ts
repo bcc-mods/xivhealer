@@ -7,9 +7,10 @@ function makePeer(over: Partial<PeerState> = {}): PeerState {
   return {
     clientId: 1,
     user: { id: 'u1', name: 'Alice', color: '#f00' },
-    selection: { eventId: null, castEventId: null },
+    selection: { eventIds: [], castEventIds: [], annotationIds: [] },
     cursorTime: null,
     dragging: null,
+    dragGroup: { eventIds: [], castEventIds: [], annotationIds: [] },
     ...over,
   }
 }
@@ -120,12 +121,24 @@ describe('advancePeerSmoothing', () => {
     expect(state.has(99)).toBe(false)
   })
 
-  it('其余字段（user / selection / clientId）原样透传', () => {
-    const peers = [makePeer({ cursorTime: 4, selection: { eventId: 'e1', castEventId: null } })]
+  it('其余字段（user / selection / clientId / dragGroup）原样透传', () => {
+    const peers = [
+      makePeer({
+        cursorTime: 4,
+        selection: { eventIds: ['e1'], castEventIds: [], annotationIds: [] },
+        dragGroup: { eventIds: ['e2'], castEventIds: ['c1'], annotationIds: [] },
+      }),
+    ]
     const { smoothed } = advancePeerSmoothing(peers, empty, 16, ZOOM)
     expect(smoothed[0].clientId).toBe(1)
     expect(smoothed[0].user.name).toBe('Alice')
-    expect(smoothed[0].selection.eventId).toBe('e1')
+    expect(smoothed[0].selection.eventIds).toEqual(['e1'])
+    // dragGroup 不被平滑，原样透传给 PeerOverlay
+    expect(smoothed[0].dragGroup).toEqual({
+      eventIds: ['e2'],
+      castEventIds: ['c1'],
+      annotationIds: [],
+    })
   })
 
   it('dragging 从有值→null：立即清除，不残留', () => {

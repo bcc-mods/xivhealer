@@ -12,6 +12,7 @@
 import { Fragment, useMemo } from 'react'
 import { Label, Line, Rect, Tag, Text } from 'react-konva'
 import { useSmoothedPeers } from './useSmoothedPeers'
+import type { PeerState } from '@/collab/awarenessTypes'
 import type { Annotation, DamageEvent, CastEvent } from '@/types/timeline'
 import type { SkillTrack } from '@/utils/skillTracks'
 import type { MitigationAction } from '@/types/mitigation'
@@ -38,6 +39,21 @@ function PeerNameTag({ x, y, name, color }: { x: number; y: number; name: string
 /** 名字标签近似高度(fontSize 10 + 上下 padding 2),用于多标签纵向错开 */
 const NAME_TAG_HEIGHT = 15
 
+/**
+ * 群组拖动 delta：抓手 ghost 当前时间 − 抓手原始时间。
+ * 随动对象在「各自原始时间 + delta」处画 ghost，复用已平滑的 dragging.time。
+ * 抓手或其原始时间查不到则返回 null（调用方据此跳过群组 ghost）。
+ */
+function groupDragDelta(
+  dragging: PeerState['dragging'],
+  lookupOriginalTime: (id: string, kind: 'damage' | 'cast' | 'annotation') => number | undefined
+): number | null {
+  if (!dragging) return null
+  const orig = lookupOriginalTime(dragging.id, dragging.kind)
+  if (orig == null) return null
+  return dragging.time - orig
+}
+
 // ─────────────────────────────────────────────
 // 固定区域 overlay（伤害事件高亮 + 光标线）
 // ─────────────────────────────────────────────
@@ -58,6 +74,8 @@ interface PeerOverlayFixedProps {
   damageTrackHeight: number
   /** 伤害轨道 annotations，用于 annotation ghost 查找 */
   annotations: Annotation[]
+  /** 全量 castEvents：仅用于「抓手是 cast」时反查其原始时间以求群组 delta（不渲染 cast） */
+  castEvents: CastEvent[]
 }
 
 export function PeerOverlayFixed({
@@ -69,6 +87,7 @@ export function PeerOverlayFixed({
   fixedAreaHeight,
   damageTrackHeight,
   annotations,
+  castEvents,
 }: PeerOverlayFixedProps) {
   // 在 overlay 内部调用而非父组件下发：使每帧 setState 只重渲本 overlay，不波及主画布
   const peers = useSmoothedPeers(zoomLevel)
@@ -90,6 +109,13 @@ export function PeerOverlayFixed({
     return map
   }, [annotations])
 
+  // castEventId → timestamp：仅用于抓手是 cast 时反查原始时间求 delta
+  const castTimestampById = useMemo(() => {
+    const map = new Map<string, number>()
+    for (const ce of castEvents) map.set(ce.id, ce.timestamp)
+    return map
+  }, [castEvents])
+
   if (peers.length === 0) return null
 
   // 同一个 damage event 可能被多个 peer 选中 → 记录每个 event 已渲染的 label 数量
@@ -98,10 +124,8 @@ export function PeerOverlayFixed({
   const nodes: React.ReactNode[] = []
 
   for (const peer of peers) {
-    const { eventId } = peer.selection
-
     // ── 伤害事件选中高亮 ──
-    if (eventId) {
+    for (const eventId of peer.selection.eventIds) {
       const ev = damageEventById.get(eventId)
       const row = damageEventRowMap.get(eventId)
       if (ev != null && row != null) {
@@ -217,6 +241,68 @@ export function PeerOverlayFixed({
       }
     }
 
+    // ── 群组拖动随动 ghost（伤害 + 伤害轨道注释，不画昵称） ──
+    // delta 由抓手 dragging（已平滑）派生；随动对象在 各自原始时间 + delta 处画 ghost。
+    const delta = groupDragDelta(peer.dragging, (id, kind) =>
+      kind === 'damage'
+        ? damageEventById.get(id)?.time
+        : kind === 'cast'
+          ? castTimestampById.get(id)
+          : annotationById.get(id)?.time
+    )
+    if (delta != null) {
+      // 随动伤害事件
+      for (const eventId of peer.dragGroup.eventIds) {
+        const ev = damageEventById.get(eventId)
+        const row = damageEventRowMap.get(eventId)
+        if (ev == null || row == null) continue
+        const CARD_W = 150
+        const CARD_H = 30
+        const ghostX = (ev.time + delta) * zoomLevel
+        const ghostY = yOffset + row * rowHeight + (rowHeight - CARD_H) / 2
+        nodes.push(
+          <Rect
+            key={`${peer.clientId}-group-dmg-${eventId}`}
+            x={ghostX}
+            y={ghostY}
+            width={CARD_W}
+            height={CARD_H}
+            fill={peer.user.color}
+            opacity={0.55}
+            stroke={peer.user.color}
+            strokeWidth={1}
+            cornerRadius={4}
+            listening={false}
+            perfectDrawEnabled={false}
+          />
+        )
+      }
+      // 随动伤害轨道注释
+      for (const annId of peer.dragGroup.annotationIds) {
+        const annotation = annotationById.get(annId)
+        if (annotation?.anchor.type !== 'damageTrack') continue
+        const ICON_SIZE = 22
+        const ghostX = (annotation.time + delta) * zoomLevel - ICON_SIZE / 2
+        const ghostY = yOffset + damageTrackHeight - 20 - ICON_SIZE / 2
+        nodes.push(
+          <Rect
+            key={`${peer.clientId}-group-ann-${annId}`}
+            x={ghostX}
+            y={ghostY}
+            width={ICON_SIZE}
+            height={ICON_SIZE}
+            fill={peer.user.color}
+            opacity={0.55}
+            stroke={peer.user.color}
+            strokeWidth={1}
+            cornerRadius={3}
+            listening={false}
+            perfectDrawEnabled={false}
+          />
+        )
+      }
+    }
+
     // ── 悬停光标线 ──
     if (peer.cursorTime != null) {
       const cx = peer.cursorTime * zoomLevel
@@ -257,6 +343,8 @@ interface PeerOverlayMainProps {
   skillTracksHeight: number
   /** 技能轨道 annotations，用于 annotation ghost 查找 */
   annotations: Annotation[]
+  /** 全量 damageEvents：仅用于「抓手是 damage」时反查其原始时间以求群组 delta（不渲染 damage） */
+  damageEvents: DamageEvent[]
 }
 
 export function PeerOverlayMain({
@@ -267,6 +355,7 @@ export function PeerOverlayMain({
   trackHeight,
   skillTracksHeight,
   annotations,
+  damageEvents,
 }: PeerOverlayMainProps) {
   // 在 overlay 内部调用而非父组件下发：使每帧 setState 只重渲本 overlay，不波及主画布
   const peers = useSmoothedPeers(zoomLevel)
@@ -287,6 +376,13 @@ export function PeerOverlayMain({
     }
     return map
   }, [annotations])
+
+  // damageEventId → time：仅用于抓手是 damage 时反查原始时间求 delta
+  const damageTimeById = useMemo(() => {
+    const map = new Map<string, number>()
+    for (const ev of damageEvents) map.set(ev.id, ev.time)
+    return map
+  }, [damageEvents])
 
   // castEventId → trackIndex：通过 playerId + effectiveTrackGroup 匹配
   const castEventTrackIndex = useMemo(() => {
@@ -311,10 +407,8 @@ export function PeerOverlayMain({
   const nodes: React.ReactNode[] = []
 
   for (const peer of peers) {
-    const { castEventId } = peer.selection
-
     // ── cast 事件选中高亮 ──
-    if (castEventId) {
+    for (const castEventId of peer.selection.castEventIds) {
       const ce = castEventById.get(castEventId)
       const trackIdx = castEventTrackIndex.get(castEventId)
       if (ce != null && trackIdx != null) {
@@ -441,6 +535,72 @@ export function PeerOverlayMain({
             </Fragment>
           )
         }
+      }
+    }
+
+    // ── 群组拖动随动 ghost（cast + 技能轨道注释，不画昵称） ──
+    const delta = groupDragDelta(peer.dragging, (id, kind) =>
+      kind === 'cast'
+        ? castEventById.get(id)?.timestamp
+        : kind === 'damage'
+          ? damageTimeById.get(id)
+          : annotationById.get(id)?.time
+    )
+    if (delta != null) {
+      // 随动 cast
+      for (const castEventId of peer.dragGroup.castEventIds) {
+        const ce = castEventById.get(castEventId)
+        const trackIdx = castEventTrackIndex.get(castEventId)
+        if (ce == null || trackIdx == null) continue
+        const ICON_SIZE = 30
+        const ghostX = (ce.timestamp + delta) * zoomLevel
+        const ghostY = trackIdx * trackHeight + trackHeight / 2 - ICON_SIZE / 2
+        nodes.push(
+          <Rect
+            key={`${peer.clientId}-group-cast-${castEventId}`}
+            x={ghostX}
+            y={ghostY}
+            width={ICON_SIZE}
+            height={ICON_SIZE}
+            fill={peer.user.color}
+            opacity={0.55}
+            stroke={peer.user.color}
+            strokeWidth={1}
+            cornerRadius={4}
+            listening={false}
+            perfectDrawEnabled={false}
+          />
+        )
+      }
+      // 随动技能轨道注释
+      for (const annId of peer.dragGroup.annotationIds) {
+        const annotation = annotationById.get(annId)
+        if (annotation?.anchor.type !== 'skillTrack') continue
+        const anchor = annotation.anchor
+        const trackIndex = skillTracks.findIndex(
+          t => t.playerId === anchor.playerId && t.actionId === anchor.actionId
+        )
+        if (trackIndex === -1) continue
+        const ICON_SIZE = 22
+        const ghostCenterY = trackIndex * trackHeight + trackHeight / 2
+        const ghostX = (annotation.time + delta) * zoomLevel - ICON_SIZE / 2
+        const ghostY = ghostCenterY - ICON_SIZE / 2
+        nodes.push(
+          <Rect
+            key={`${peer.clientId}-group-ann-${annId}`}
+            x={ghostX}
+            y={ghostY}
+            width={ICON_SIZE}
+            height={ICON_SIZE}
+            fill={peer.user.color}
+            opacity={0.55}
+            stroke={peer.user.color}
+            strokeWidth={1}
+            cornerRadius={3}
+            listening={false}
+            perfectDrawEnabled={false}
+          />
+        )
       }
     }
 

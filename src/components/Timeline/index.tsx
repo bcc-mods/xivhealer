@@ -1539,8 +1539,8 @@ export default function TimelineCanvas({ width, height }: TimelineCanvasProps) {
   const ANNOTATION_ICON_HALF = ANNOTATION_ICON_SIZE / 2
   buildMarqueeObjectsRef.current = () => {
     const objs: MarqueeObject[] = []
-    // 伤害事件（固定区，y 不随垂直滚动）
-    for (const event of timeline.damageEvents) {
+    // 伤害事件（固定区，y 不随垂直滚动）；只框选过滤后可见的事件，与渲染一致
+    for (const event of filteredDamageEvents) {
       const x0 = canvasLeft + event.time * zoomLevel - clampedScrollLeft
       const row = damageEventRowMap.get(event.id) ?? 0
       const y0 = timeRulerHeight + row * LANE_ROW_HEIGHT + DAMAGE_CARD_Y_OFFSET

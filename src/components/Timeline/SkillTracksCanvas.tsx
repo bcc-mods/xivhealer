@@ -652,7 +652,8 @@ export default function SkillTracksCanvas({
               onDragEnd={x => onUpdateCastEvent(castEvent.id, x)}
               onContextMenu={e => {
                 e.evt.preventDefault()
-                if (isReadOnly) return
+                // 只读模式也要派发：命中多选时 handleContextMenu 会弹「复制」批量菜单；
+                // 单个 cast 在只读下由 TimelineContextMenu 渲染为 null（无可见菜单）。
                 onContextMenu(
                   { type: 'castEvent', castEventId: castEvent.id, actionId: castEvent.actionId },
                   e.evt.clientX,

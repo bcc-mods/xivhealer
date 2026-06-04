@@ -1591,6 +1591,21 @@ describe('simulate → castEffectiveEndByCastEventId', () => {
     expect(castEffectiveEndByCastEventId.get('c1')).toBe(5)
   })
 
+  it('纯 regen cast（无 primary）→ 经 ?? all 兜底取全部 max', () => {
+    // 庇护所 3569 只 attach regen 1911（category ['partywide','heal'] → other），24s。
+    // 无 primary 条目 → reduceCastEffectiveEnds 走 `?? all` 兜底 → 0 + 24 = 24。
+    const castEvents = [
+      { id: 'c1', actionId: 3569, playerId: 1, timestamp: 0 } as unknown as CastEvent,
+    ]
+    const calc = new MitigationCalculator()
+    const { castEffectiveEndByCastEventId } = calc.simulate({
+      castEvents,
+      damageEvents: [],
+      initialState: { players: [], statuses: [], timestamp: 0 },
+    })
+    expect(castEffectiveEndByCastEventId.get('c1')).toBe(24)
+  })
+
   // 未实现的测试（等中期 extension / detonation executor 落地后补）：
   // - "executor 通过 updateStatus 延长 endTime → effectiveEnd 跟到新 endTime"
   // - "executor 通过 removeStatus 引爆 → effectiveEnd = 引爆 cast 时刻"

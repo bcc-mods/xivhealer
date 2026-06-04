@@ -899,17 +899,17 @@ export const useTimelineStore = create<TimelineState>()((set, get) => {
       const annotationIds: string[] = []
       engine.doc.transact(() => {
         for (const e of objs.damageEvents) {
-          const id = generateId()
+          const id = generateObjectId()
           yAddDamageEvent(engine.doc, { ...e, id })
           eventIds.push(id)
         }
         for (const c of objs.castEvents) {
-          const id = generateId()
+          const id = generateObjectId()
           yAddCastEvent(engine.doc, { ...c, id })
           castEventIds.push(id)
         }
         for (const a of objs.annotations) {
-          const id = generateId()
+          const id = generateObjectId()
           yAddAnnotation(engine.doc, { ...a, id })
           annotationIds.push(id)
         }

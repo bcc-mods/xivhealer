@@ -108,6 +108,7 @@ const CastEventIcon = memo(function CastEventIcon({
 
   return (
     <Group
+      name="tlObject"
       x={x}
       y={trackY}
       draggable={isSelected && !isReadOnly}

@@ -128,6 +128,7 @@ const DamageEventCard = memo(function DamageEventCard({
 
   return (
     <Group
+      name="tlObject"
       x={x}
       y={y}
       draggable={isSelected && !isReadOnly}

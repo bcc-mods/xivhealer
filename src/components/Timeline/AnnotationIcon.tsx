@@ -46,6 +46,7 @@ export default function AnnotationIcon({
 
   return (
     <Group
+      name="tlObject"
       x={x - ICON_SIZE / 2 + dragOffsetX}
       y={y - ICON_SIZE / 2}
       scaleX={SCALE}

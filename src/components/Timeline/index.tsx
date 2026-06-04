@@ -1559,14 +1559,21 @@ export default function TimelineCanvas({ width, height }: TimelineCanvasProps) {
     const inRuler = localY <= timeRulerHeight
     if (canvasTool !== 'select' && !inRuler) return
     const localX = e.clientX - rect.left
-    // 按下点落在某个对象盒内（选中态对象可拖动）时交给 Konva 处理（拖动 / 单击选中），
+    // 按下点落在某个对象（根 Group 标 name="tlObject"）上时交给 Konva 处理（拖动 / 单击选中），
     // 不启动框选；仅空白处按下才框选（按对象=操作对象，按空白=框选）。
+    // 用 Konva 命中图判定，而非重算各对象像素盒——cast 整条 Group（图标 + 绿色持续条 +
+    // 蓝色 CD 条 + 全宽响应层）都可拖动，盒子法会漏掉条上的按压；命中图天然知道真实几何。
     // 标尺带内无对象，inRuler 时跳过此判断，保持全高度框选。
     if (!inRuler) {
-      const hit = buildMarqueeObjectsRef
-        .current()
-        .some(o => localX >= o.x0 && localX <= o.x1 && localY >= o.y0 && localY <= o.y1)
-      if (hit) return
+      const onObject = [fixedStageRef.current, stageRef.current].some(stage => {
+        if (!stage) return false
+        const sbox = stage.container().getBoundingClientRect()
+        const px = e.clientX - sbox.left
+        const py = e.clientY - sbox.top
+        if (px < 0 || py < 0 || px > sbox.width || py > sbox.height) return false
+        return !!stage.getIntersection({ x: px, y: py })?.findAncestor('.tlObject', true)
+      })
+      if (onObject) return
     }
     marquee.onPointerDown(localX, localY, e.shiftKey)
 

@@ -1615,6 +1615,8 @@ export default function TimelineCanvas({ width, height }: TimelineCanvasProps) {
     if (!container) return
     const rect = container.getBoundingClientRect()
     const localY = e.clientY - rect.top
+    // 落在底部 minimap 区：交给 minimap 自身交互，不启动框选
+    if (localY >= height - minimapHeight) return
     const inRuler = localY <= timeRulerHeight
     if (canvasTool !== 'select' && !inRuler) return
     const localX = e.clientX - rect.left
@@ -1671,18 +1673,25 @@ export default function TimelineCanvas({ width, height }: TimelineCanvasProps) {
         setPinnedAnnotationId(null)
       }}
     >
-      {/* 框选高亮覆盖层（DOM div，非 Konva） */}
-      {marquee.rect && (
-        <div
-          className="pointer-events-none absolute z-20 border border-dashed border-primary bg-primary/10"
-          style={{
-            left: Math.min(marquee.rect.x0, marquee.rect.x1),
-            top: marquee.rect.infinite ? 0 : Math.min(marquee.rect.y0, marquee.rect.y1),
-            width: Math.abs(marquee.rect.x1 - marquee.rect.x0),
-            height: marquee.rect.infinite ? '100%' : Math.abs(marquee.rect.y1 - marquee.rect.y0),
-          }}
-        />
-      )}
+      {/* 框选高亮覆盖层（DOM div，非 Konva）；底边夹到画布区，不覆盖底部 minimap */}
+      {marquee.rect &&
+        (() => {
+          const r = marquee.rect
+          const canvasBottom = height - minimapHeight
+          const top = r.infinite ? 0 : Math.max(0, Math.min(r.y0, r.y1))
+          const bottom = r.infinite ? canvasBottom : Math.min(canvasBottom, Math.max(r.y0, r.y1))
+          return (
+            <div
+              className="pointer-events-none absolute z-20 border border-dashed border-primary bg-primary/10"
+              style={{
+                left: Math.min(r.x0, r.x1),
+                top,
+                width: Math.abs(r.x1 - r.x0),
+                height: Math.max(0, bottom - top),
+              }}
+            />
+          )
+        })()}
 
       {/* 固定顶部区域：时间标尺 + 伤害事件轨道 */}
       <div className="flex flex-shrink-0" style={{ height: fixedAreaHeight }}>

@@ -2,7 +2,8 @@
  * Peer 光标 / 拖动补间的纯逻辑：帧率无关指数逼近 + 吸附 / 收敛判定。
  * 不依赖 React / requestAnimationFrame，便于单测；由 useSmoothedPeers 驱动。
  *
- * 只平滑两个时间标量：peer.cursorTime 与 peer.dragging.time；其余字段原样透传。
+ * 只平滑两个时间标量：peer.cursorTime 与 peer.dragging.time；其余字段（含 dragGroup
+ * 的 id 列表）原样透传，PeerOverlay 据 dragGroup + 已平滑的 dragging 派生 delta 画群组 ghost。
  */
 import type { PeerState } from '@/collab/awarenessTypes'
 

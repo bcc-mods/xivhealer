@@ -223,6 +223,8 @@ interface TimelineState {
   setLocalCursor: (time: number | null) => void
   /** 设本地拖动 ghost;拖动结束传 null */
   setLocalDragging: (dragging: AwarenessState['dragging']) => void
+  /** 设本地群组拖动随动 id 列表;非群组拖动 / 结束传空数组 */
+  setLocalDragGroup: (dragGroup: AwarenessState['dragGroup']) => void
 }
 
 /** UI 态 / 运行时态初值(不含 engine / timeline) */
@@ -334,6 +336,7 @@ export const useTimelineStore = create<TimelineState>()((set, get) => {
         selection: s.selection ?? { eventIds: [], castEventIds: [], annotationIds: [] },
         cursorTime: s.cursorTime ?? null,
         dragging: s.dragging ?? null,
+        dragGroup: s.dragGroup ?? { eventIds: [], castEventIds: [], annotationIds: [] },
       })
     }
     set({ peers })
@@ -375,6 +378,11 @@ export const useTimelineStore = create<TimelineState>()((set, get) => {
     })
     engine.awareness.setLocalStateField('cursorTime', null)
     engine.awareness.setLocalStateField('dragging', null)
+    engine.awareness.setLocalStateField('dragGroup', {
+      eventIds: [],
+      castEventIds: [],
+      annotationIds: [],
+    })
     const onPeersChange = () => reprojectPeers(engine)
     engine.awareness.on('change', onPeersChange)
     peersUnsub = () => engine.awareness.off('change', onPeersChange)
@@ -958,6 +966,12 @@ export const useTimelineStore = create<TimelineState>()((set, get) => {
       const engine = get().engine
       if (!engine) return
       engine.awareness.setLocalStateField('dragging', dragging)
+    },
+
+    setLocalDragGroup: dragGroup => {
+      const engine = get().engine
+      if (!engine) return
+      engine.awareness.setLocalStateField('dragGroup', dragGroup)
     },
 
     reset: () => {

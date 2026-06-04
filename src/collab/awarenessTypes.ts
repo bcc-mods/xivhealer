@@ -28,6 +28,9 @@ export interface AwarenessState {
     /** cast 的目标轨道玩家;damage / annotation 恒为 null */
     playerId: number | null
   } | null
+  /** 群组拖动时一起移动的其余选中对象 id(按类型,不含被抓住的那个);非群组拖动为空数组。
+   *  peer 据此在 各自原始时间 + delta 处画 ghost,delta 由 dragging 派生。 */
+  dragGroup: { eventIds: string[]; castEventIds: string[]; annotationIds: string[] }
 }
 
 /** store 投影给 UI 的他人状态(附 Yjs clientID);peer 必有 user(reprojectPeers 已过滤无 user 者) */

@@ -87,6 +87,7 @@ export function decodeEditRequest(payload: Uint8Array): number {
 //   bit3 cursorTime        : float32
 //   bit4 dragging          : uint8 kind, float32 time, varUint(playerId+1|0=null), varString id
 //   bit5 sel.annotationIds : varUint count + count × varString
+//   bit6 dragGroup         : eventIds[] + castEventIds[] + annotationIds[]（各为 varString[]）
 //
 // envelope:[varUint numClients] + 每 client [varUint clientID][varUint clock][varUint8Array state]
 //   state 段为空(长度 0)表示该 client 被移除(null state)。
@@ -97,6 +98,7 @@ const B_SEL_CAST = 1 << 2
 const B_CURSOR = 1 << 3
 const B_DRAG = 1 << 4
 const B_SEL_ANNOTATION = 1 << 5
+const B_DRAG_GROUP = 1 << 6
 
 const DRAG_KINDS = ['damage', 'cast', 'annotation'] as const
 
@@ -117,7 +119,12 @@ function readVarStringArray(dec: decoding.Decoder): string[] {
 /** 単個 AwarenessState → 二進制(user 缺省时 bit0 不置位,用于上行不带 user) */
 export function encodeAwarenessState(state: Partial<AwarenessState>): Uint8Array {
   const enc = encoding.createEncoder()
-  const { user, selection, cursorTime, dragging } = state
+  const { user, selection, cursorTime, dragging, dragGroup } = state
+  const dragGroupNonEmpty =
+    !!dragGroup &&
+    (dragGroup.eventIds.length > 0 ||
+      dragGroup.castEventIds.length > 0 ||
+      dragGroup.annotationIds.length > 0)
   let mask = 0
   if (user) mask |= B_USER
   if (selection?.eventIds && selection.eventIds.length > 0) mask |= B_SEL_EVENT
@@ -125,6 +132,7 @@ export function encodeAwarenessState(state: Partial<AwarenessState>): Uint8Array
   if (cursorTime != null) mask |= B_CURSOR
   if (dragging) mask |= B_DRAG
   if (selection?.annotationIds && selection.annotationIds.length > 0) mask |= B_SEL_ANNOTATION
+  if (dragGroupNonEmpty) mask |= B_DRAG_GROUP
   encoding.writeUint8(enc, mask)
   if (mask & B_USER) {
     encoding.writeVarString(enc, user!.id)
@@ -140,6 +148,11 @@ export function encodeAwarenessState(state: Partial<AwarenessState>): Uint8Array
     encoding.writeVarString(enc, dragging!.id)
   }
   if (mask & B_SEL_ANNOTATION) writeVarStringArray(enc, selection!.annotationIds)
+  if (mask & B_DRAG_GROUP) {
+    writeVarStringArray(enc, dragGroup!.eventIds)
+    writeVarStringArray(enc, dragGroup!.castEventIds)
+    writeVarStringArray(enc, dragGroup!.annotationIds)
+  }
   return encoding.toUint8Array(enc)
 }
 
@@ -151,6 +164,7 @@ export function decodeAwarenessState(bytes: Uint8Array): AwarenessState {
     selection: { eventIds: [], castEventIds: [], annotationIds: [] },
     cursorTime: null,
     dragging: null,
+    dragGroup: { eventIds: [], castEventIds: [], annotationIds: [] },
   }
   if (mask & B_USER) {
     const id = decoding.readVarString(dec)
@@ -168,6 +182,11 @@ export function decodeAwarenessState(bytes: Uint8Array): AwarenessState {
     state.dragging = { id, kind, time: dragTime, playerId: rawPlayer === 0 ? null : rawPlayer - 1 }
   }
   if (mask & B_SEL_ANNOTATION) state.selection.annotationIds = readVarStringArray(dec)
+  if (mask & B_DRAG_GROUP) {
+    state.dragGroup.eventIds = readVarStringArray(dec)
+    state.dragGroup.castEventIds = readVarStringArray(dec)
+    state.dragGroup.annotationIds = readVarStringArray(dec)
+  }
   return state
 }
 

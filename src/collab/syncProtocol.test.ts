@@ -104,6 +104,44 @@ describe('awareness 二进制 codec', () => {
     expect(back.selection.annotationIds).toEqual(['ann1'])
   })
 
+  it('dragGroup round-trip（部分数组有值、一个为空）', () => {
+    const state: Partial<AwarenessState> = {
+      selection: { eventIds: [], castEventIds: [], annotationIds: [] },
+      cursorTime: null,
+      dragging: { id: 'd1', kind: 'damage', time: 5, playerId: null },
+      dragGroup: { eventIds: ['e2', 'e3'], castEventIds: [], annotationIds: ['ann1'] },
+    }
+    const back = decodeAwarenessState(encodeAwarenessState(state))
+    expect(back.dragGroup).toEqual({
+      eventIds: ['e2', 'e3'],
+      castEventIds: [],
+      annotationIds: ['ann1'],
+    })
+    // dragging 与 dragGroup 共存时彼此不串位
+    expect(back.dragging).toEqual({ id: 'd1', kind: 'damage', time: 5, playerId: null })
+  })
+
+  it('缺省 dragGroup 解码为空数组（bit6 不置位）', () => {
+    const state: Partial<AwarenessState> = {
+      selection: { eventIds: [], castEventIds: [], annotationIds: [] },
+      cursorTime: 1,
+      dragging: null,
+    }
+    const back = decodeAwarenessState(encodeAwarenessState(state))
+    expect(back.dragGroup).toEqual({ eventIds: [], castEventIds: [], annotationIds: [] })
+  })
+
+  it('全空 dragGroup 不置位 bit6（不浪费字节，解码仍为空数组）', () => {
+    const state: Partial<AwarenessState> = {
+      selection: { eventIds: [], castEventIds: [], annotationIds: [] },
+      cursorTime: null,
+      dragging: null,
+      dragGroup: { eventIds: [], castEventIds: [], annotationIds: [] },
+    }
+    const back = decodeAwarenessState(encodeAwarenessState(state))
+    expect(back.dragGroup).toEqual({ eventIds: [], castEventIds: [], annotationIds: [] })
+  })
+
   it('encodeAwarenessBinary / applyAwarenessBinary 把 peer state 投进对端 Awareness', () => {
     const docA = new Y.Doc()
     const awA = new Awareness(docA)

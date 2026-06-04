@@ -794,6 +794,23 @@ export default function TimelineCanvas({ width, height }: TimelineCanvasProps) {
     preventDefault: true,
   })
 
+  // 全选：选中时间轴所有伤害事件 / 技能 cast / 注释
+  useHotkeys(
+    'mod+a',
+    () => {
+      const s = useTimelineStore.getState()
+      const tl = s.timeline
+      if (!tl) return
+      s.setSelection({
+        eventIds: tl.damageEvents.map(e => e.id),
+        castEventIds: tl.castEvents.map(c => c.id),
+        annotationIds: (tl.annotations ?? []).map(a => a.id),
+      })
+    },
+    { enabled: !isReadOnly, preventDefault: true },
+    []
+  )
+
   // 删除：多选时批量删除，否则删单个选中项或固定注释
   useHotkeys(
     'delete, backspace',
@@ -931,6 +948,15 @@ export default function TimelineCanvas({ width, height }: TimelineCanvasProps) {
       const draggedCastId = kind === 'cast' ? id : null
       groupDragAnchorRef.current = { anchorX, draggedDamageId, draggedCastId }
       setGroupDrag({ delta: 0, draggedDamageId, draggedCastId })
+      // 广播随动对象 id（排除被抓住的那个，仅从其同类数组剔除）供协作者画 ghost。
+      // 成员在整段拖动内固定，begin 时设一次即可；逐帧的 dragging 已携带抓手 ghost，
+      // peer 据此派生 delta 套用到各随动对象的原始时间。
+      s.setLocalDragGroup({
+        eventIds: kind === 'damage' ? s.selectedEventIds.filter(x => x !== id) : s.selectedEventIds,
+        castEventIds:
+          kind === 'cast' ? s.selectedCastEventIds.filter(x => x !== id) : s.selectedCastEventIds,
+        annotationIds: s.selectedAnnotationIds,
+      })
       return true
     },
     []
@@ -950,6 +976,12 @@ export default function TimelineCanvas({ width, height }: TimelineCanvasProps) {
   const endGroupDrag = useCallback(() => {
     groupDragAnchorRef.current = null
     setGroupDrag(null)
+    // 清除广播的群组随动 id（每条 drag-end 路径都会调用本函数兜底）
+    useTimelineStore.getState().setLocalDragGroup({
+      eventIds: [],
+      castEventIds: [],
+      annotationIds: [],
+    })
   }, [])
 
   // 处理伤害事件拖动
@@ -1779,6 +1811,7 @@ export default function TimelineCanvas({ width, height }: TimelineCanvasProps) {
                 fixedAreaHeight={fixedAreaHeight}
                 damageTrackHeight={eventTrackHeight}
                 annotations={damageTrackAnnotations}
+                castEvents={timeline?.castEvents ?? []}
               />
             </Layer>
           </Stage>
@@ -1878,6 +1911,7 @@ export default function TimelineCanvas({ width, height }: TimelineCanvasProps) {
                     trackHeight={skillTrackHeight}
                     skillTracksHeight={skillTracksHeight}
                     annotations={skillTrackAnnotations}
+                    damageEvents={filteredDamageEvents}
                   />
                 }
                 onSelectCastEvent={handleSelectCastEvent}

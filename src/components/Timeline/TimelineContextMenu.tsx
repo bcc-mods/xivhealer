@@ -136,7 +136,7 @@ export default function TimelineContextMenu({
                 onClose()
               }}
             >
-              复制（{menu.count} 项）
+              复制全部
               <DropdownMenuShortcut>{modKey}C</DropdownMenuShortcut>
             </DropdownMenuItem>
             <DropdownMenuItem
@@ -146,7 +146,7 @@ export default function TimelineContextMenu({
                 onClose()
               }}
             >
-              删除（{menu.count} 项）
+              删除全部
               <DropdownMenuShortcut>{deleteKeyLabel}</DropdownMenuShortcut>
             </DropdownMenuItem>
           </>

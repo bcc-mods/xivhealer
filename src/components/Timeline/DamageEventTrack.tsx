@@ -11,6 +11,12 @@ import type { DamageEvent, Annotation } from '@/types/timeline'
 interface DamageEventTrackProps {
   events: DamageEvent[]
   selectedEventIds: string[]
+  /** 多选群组拖动的 x 偏移（像素），0 表示无 */
+  groupDragDelta?: number
+  /** 群组拖动的「抓手」伤害事件 id（其卡片由 Konva 自身驱动，不重复施加偏移） */
+  groupDraggedId?: string | null
+  /** 选中的注释 id（群组拖动时随同偏移） */
+  selectedAnnotationIds?: string[]
   zoomLevel: number
   timelineWidth: number
   trackHeight: number
@@ -56,6 +62,9 @@ interface DamageEventTrackProps {
 export default function DamageEventTrack({
   events,
   selectedEventIds,
+  groupDragDelta = 0,
+  groupDraggedId = null,
+  selectedAnnotationIds = [],
   zoomLevel,
   timelineWidth,
   trackHeight,
@@ -119,14 +128,14 @@ export default function DamageEventTrack({
       const x =
         draggingEventPosition?.eventId === event.id
           ? draggingEventPosition.x
-          : event.time * zoomLevel
+          : event.time * zoomLevel + (selectedEventIds.includes(event.id) ? groupDragDelta : 0)
       return x >= visibleMinX && x <= visibleMaxX
     })
     .map(event => {
       const x =
         draggingEventPosition?.eventId === event.id
           ? draggingEventPosition.x
-          : event.time * zoomLevel
+          : event.time * zoomLevel + (selectedEventIds.includes(event.id) ? groupDragDelta : 0)
       const row = rowMap.get(event.id) ?? 0
       const cardBottomY = yOffset + row * rowHeight + CARD_HEIGHT
 
@@ -181,7 +190,9 @@ export default function DamageEventTrack({
       {[...events]
         .filter(event => {
           if (peerDraggingIds?.has(event.id)) return false
-          const x = event.time * zoomLevel
+          // 视口裁剪需用群组拖动后的有效 x，否则被拖入视口的选中卡片会被误裁剪
+          const x =
+            event.time * zoomLevel + (selectedEventIds.includes(event.id) ? groupDragDelta : 0)
           const CARD_WIDTH = 150
           return x + CARD_WIDTH >= visibleMinX && x <= visibleMaxX
         })
@@ -198,6 +209,11 @@ export default function DamageEventTrack({
               key={event.id}
               event={event}
               isSelected={selectedEventIds.includes(event.id)}
+              dragOffsetX={
+                selectedEventIds.includes(event.id) && event.id !== groupDraggedId
+                  ? groupDragDelta
+                  : 0
+              }
               zoomLevel={zoomLevel}
               rowHeight={rowHeight}
               row={rowMap.get(event.id) ?? 0}
@@ -236,6 +252,7 @@ export default function DamageEventTrack({
               key={`annotation-${annotation.id}`}
               x={x}
               y={annotationY}
+              dragOffsetX={selectedAnnotationIds.includes(annotation.id) ? groupDragDelta : 0}
               isPinned={pinnedAnnotationId === annotation.id}
               draggable={!isReadOnly && pinnedAnnotationId === annotation.id}
               onDragStart={() => onAnnotationDragStart(annotation.id)}

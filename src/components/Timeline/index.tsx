@@ -128,6 +128,19 @@ export default function TimelineCanvas({ width, height }: TimelineCanvasProps) {
     eventId: string
     x: number
   } | null>(null)
+  // 多选群组拖动：拖动一个选中对象时，其余选中对象实时同步偏移。
+  // groupDrag（state）驱动渲染期偏移；groupDragAnchorRef（ref）存抓手起点 x，
+  // 供 onDragMove 计算 delta，避免闭包读到过期 state。
+  const [groupDrag, setGroupDrag] = useState<{
+    delta: number
+    draggedDamageId: string | null
+    draggedCastId: string | null
+  } | null>(null)
+  const groupDragAnchorRef = useRef<{
+    anchorX: number
+    draggedDamageId: string | null
+    draggedCastId: string | null
+  } | null>(null)
   const [addEventAt, setAddEventAt] = useState<number | null>(null)
   // 虚拟滚动状态
   const [scrollLeft, setScrollLeft] = useState(0)
@@ -194,6 +207,7 @@ export default function TimelineCanvas({ width, height }: TimelineCanvasProps) {
   // 多选 ID 列表——渲染期需响应式订阅，保证高亮随选区变化更新
   const selectedEventIds = useTimelineStore(s => s.selectedEventIds)
   const selectedCastEventIds = useTimelineStore(s => s.selectedCastEventIds)
+  const selectedAnnotationIds = useTimelineStore(s => s.selectedAnnotationIds)
   const { actions } = useMitigationStore()
   const { isDamageTrackCollapsed, toggleDamageTrackCollapsed } = useUIStore()
   const enableHpSimulation = useUIStore(s => s.enableHpSimulation)
@@ -899,6 +913,45 @@ export default function TimelineCanvas({ width, height }: TimelineCanvasProps) {
     addCastAt(track.actionId, track.playerId, time)
   }
 
+  // 群组拖动：若被拖动对象（damage/cast 抓手）属于一个总数 >1 的多选，则记录抓手起点
+  // 并进入群组拖动态。total 计入 annotation —— 注释只能作为随动对象，不能作抓手。
+  // 返回是否进入群组拖动（供调用方决定是否走单体逻辑）。
+  const tryBeginGroupDrag = useCallback(
+    (kind: 'damage' | 'cast', id: string, anchorX: number): boolean => {
+      const s = useTimelineStore.getState()
+      const total =
+        s.selectedEventIds.length + s.selectedCastEventIds.length + s.selectedAnnotationIds.length
+      const inSel =
+        kind === 'damage' ? s.selectedEventIds.includes(id) : s.selectedCastEventIds.includes(id)
+      if (total <= 1 || !inSel) {
+        groupDragAnchorRef.current = null
+        return false
+      }
+      const draggedDamageId = kind === 'damage' ? id : null
+      const draggedCastId = kind === 'cast' ? id : null
+      groupDragAnchorRef.current = { anchorX, draggedDamageId, draggedCastId }
+      setGroupDrag({ delta: 0, draggedDamageId, draggedCastId })
+      return true
+    },
+    []
+  )
+
+  // 群组拖动中：用抓手当前 x 与起点的差驱动其余选中对象的实时偏移。
+  const updateGroupDrag = useCallback((currentX: number) => {
+    const anchor = groupDragAnchorRef.current
+    if (!anchor) return
+    setGroupDrag({
+      delta: currentX - anchor.anchorX,
+      draggedDamageId: anchor.draggedDamageId,
+      draggedCastId: anchor.draggedCastId,
+    })
+  }, [])
+
+  const endGroupDrag = useCallback(() => {
+    groupDragAnchorRef.current = null
+    setGroupDrag(null)
+  }, [])
+
   // 处理伤害事件拖动
   const handleEventDragEnd = (eventId: string, x: number) => {
     if (isReadOnly) return
@@ -915,6 +968,7 @@ export default function TimelineCanvas({ width, height }: TimelineCanvasProps) {
     }
     s.setLocalDragging(null)
     setDraggingEventPosition(null)
+    endGroupDrag()
   }
 
   // 上报伤害事件拖动 ghost（start 立即, move 节流 ~50ms）
@@ -1021,6 +1075,7 @@ export default function TimelineCanvas({ width, height }: TimelineCanvasProps) {
       updateCastEvent(castEventId, { timestamp: newTime, actionId: nextActionId })
     }
     useTimelineStore.getState().setLocalDragging(null)
+    endGroupDrag()
   }
 
   // 平移刚结束的同帧内阻止意外选中（panJustEndedRef 由 rAF 自动清除）
@@ -1315,8 +1370,10 @@ export default function TimelineCanvas({ width, height }: TimelineCanvasProps) {
       const newTime = Math.max(TIMELINE_START_TIME, Math.round((newX / zoomLevel) * 10) / 10)
       updateAnnotation(annotationId, { time: newTime })
       useTimelineStore.getState().setLocalDragging(null)
+      // 与 handleEventDragEnd / handleCastEventDragEnd 一致地兜底清除群组拖动态
+      endGroupDrag()
     },
-    [zoomLevel, updateAnnotation]
+    [zoomLevel, updateAnnotation, endGroupDrag]
   )
 
   const handleAnnotationConfirm = useCallback(
@@ -1631,6 +1688,9 @@ export default function TimelineCanvas({ width, height }: TimelineCanvasProps) {
               <DamageEventTrack
                 events={filteredDamageEvents}
                 selectedEventIds={selectedEventIds}
+                groupDragDelta={groupDrag?.delta ?? 0}
+                groupDraggedId={groupDrag?.draggedDamageId ?? null}
+                selectedAnnotationIds={selectedAnnotationIds}
                 zoomLevel={zoomLevel}
                 timelineWidth={timelineWidth}
                 trackHeight={eventTrackHeight}
@@ -1646,10 +1706,12 @@ export default function TimelineCanvas({ width, height }: TimelineCanvasProps) {
                 onDragStart={(eventId, x) => {
                   setDraggingEventPosition({ eventId, x })
                   reportDamageDrag(eventId, x, true)
+                  tryBeginGroupDrag('damage', eventId, x)
                 }}
                 onDragMove={(eventId, x) => {
                   setDraggingEventPosition({ eventId, x })
                   reportDamageDrag(eventId, x)
+                  updateGroupDrag(x)
                 }}
                 onDragEnd={handleEventDragEnd}
                 onAnnotationDragMove={reportAnnotationDrag}
@@ -1787,6 +1849,10 @@ export default function TimelineCanvas({ width, height }: TimelineCanvasProps) {
                 trackHeight={skillTrackHeight}
                 maxTime={maxTime}
                 selectedCastEventIds={selectedCastEventIds}
+                groupDragDelta={groupDrag?.delta ?? 0}
+                groupDraggedCastId={groupDrag?.draggedCastId ?? null}
+                selectedEventIds={selectedEventIds}
+                selectedAnnotationIds={selectedAnnotationIds}
                 draggingEventPosition={draggingEventPosition}
                 scrollLeft={clampedScrollLeft}
                 scrollTop={clampedScrollTop}
@@ -1824,8 +1890,17 @@ export default function TimelineCanvas({ width, height }: TimelineCanvasProps) {
                 onAnnotationDragStart={handleAnnotationDragStart}
                 onAnnotationDragEnd={handleAnnotationDragEnd}
                 peerDraggingIds={peerDraggingIds}
-                onCastDragStart={reportCastDragStart}
-                onCastDragMove={reportCastDrag}
+                onCastDragStart={castEventId => {
+                  reportCastDragStart(castEventId)
+                  const ce = useTimelineStore
+                    .getState()
+                    .timeline?.castEvents.find(c => c.id === castEventId)
+                  if (ce) tryBeginGroupDrag('cast', castEventId, ce.timestamp * zoomLevel)
+                }}
+                onCastDragMove={(castEventId, x) => {
+                  reportCastDrag(castEventId, x)
+                  updateGroupDrag(x)
+                }}
                 onAnnotationDragMove={reportAnnotationDrag}
               />
             </Stage>

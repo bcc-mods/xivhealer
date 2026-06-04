@@ -16,7 +16,7 @@ import {
   Eye,
   FileInput,
   FileOutput,
-  MousePointer2,
+  Hand,
   BoxSelect,
 } from 'lucide-react'
 import { useTimelineStore } from '@/store/timelineStore'
@@ -182,27 +182,29 @@ export default function EditorToolbar({
 
             {/* 平移 / 框选 工具切换（仅时间轴视图 + 可编辑时展示） */}
             {viewMode !== 'table' && !isReadOnly && (
-              <div className="flex items-center gap-1">
+              <div className="flex items-center gap-0.5 rounded-md border border-border bg-muted/40 p-0.5">
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <Button
-                      variant={canvasTool === 'pan' ? 'secondary' : 'ghost'}
+                      variant={canvasTool === 'pan' ? 'default' : 'ghost'}
                       size="icon"
-                      className="h-7 w-7"
-                      aria-label="拖动平移"
+                      className="h-6 w-6"
+                      aria-pressed={canvasTool === 'pan'}
+                      aria-label="抓手"
                       onClick={() => setCanvasTool('pan')}
                     >
-                      <MousePointer2 className="w-4 h-4" />
+                      <Hand className="w-4 h-4" />
                     </Button>
                   </TooltipTrigger>
-                  <TooltipContent side="bottom">拖动平移</TooltipContent>
+                  <TooltipContent side="bottom">抓手</TooltipContent>
                 </Tooltip>
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <Button
-                      variant={canvasTool === 'select' ? 'secondary' : 'ghost'}
+                      variant={canvasTool === 'select' ? 'default' : 'ghost'}
                       size="icon"
-                      className="h-7 w-7"
+                      className="h-6 w-6"
+                      aria-pressed={canvasTool === 'select'}
                       aria-label="框选"
                       onClick={() => setCanvasTool('select')}
                     >

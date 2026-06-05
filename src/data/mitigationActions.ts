@@ -64,7 +64,7 @@ export const MITIGATION_DATA: MitigationDataSource = {
       category: ['self', 'percentage'],
       duration: 20,
       cooldown: 90,
-      executor: createBuffExecutor(1191, 20),
+      executor: createBuffExecutor(1191, 20, { uniqueGroup: [] }),
     },
 
     // 骑士 (PLD)

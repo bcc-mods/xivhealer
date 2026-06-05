@@ -59,20 +59,30 @@ export type MitigationCategory =
   | 'boss'
 ```
 
-### `src/data/mitigationActions.ts`
+### `src/data/statusExtras.ts`（计算识别的真正来源，**必改**）
 
-给以下 action 的 `category` 追加 `'boss'`（保留既有项）：
+计算器在状态层通过 `getStatusById(status.statusId).category?.includes('boss')` 判定。
+而 status meta 的 `category` 来自 **`statusExtras.ts`**（`statusRegistry.ts:74` `category: extras?.category`），
+**不是**从 action 自动继承。因此必须给目标减对应的**状态 id** 在 `statusExtras.ts` 补 `'boss'`。
 
-| id   | 名称     | 改前                         | 改后                                |
-| ---- | -------- | ---------------------------- | ----------------------------------- |
-| 7535 | 雪仇     | `['partywide','percentage']` | `['partywide','percentage','boss']` |
-| 7549 | 牵制     | `['partywide','percentage']` | `['partywide','percentage','boss']` |
-| 2887 | 武装解除 | `['partywide','percentage']` | `['partywide','percentage','boss']` |
-| 7560 | 昏乱     | `['partywide','percentage']` | `['partywide','percentage','boss']` |
+这 4 个状态当前在 `statusExtras.ts` 中**无 entry**（`category` 为 `undefined`，
+经 `isStatusValidForTank` 默认放行），需新增 entry：
 
-> 上表 id 已核对 `src/data/mitigationActions.ts`。识别在状态层通过
-> `getStatusById(status.statusId).category?.includes('boss')` 判定，故 status meta
-> 的 category 须继承自对应 action（既有机制已如此）。
+| status id | 名称     | 来源 action（id） | 新增 entry                                          |
+| --------- | -------- | ----------------- | --------------------------------------------------- |
+| 1193      | 雪仇     | 雪仇（7535）      | `{ category: ['partywide', 'percentage', 'boss'] }` |
+| 1195      | 牵制     | 牵制（7549）      | `{ category: ['partywide', 'percentage', 'boss'] }` |
+| 860       | 武装解除 | 武装解除（2887）  | `{ category: ['partywide', 'percentage', 'boss'] }` |
+| 1203      | 昏乱     | 昏乱（7560）      | `{ category: ['partywide', 'percentage', 'boss'] }` |
+
+> status id 取自各 action 的 `createBuffExecutor(<statusId>, ...)` 第一参；action id 已核对。
+> 新增 `partywide` 不改变既有坦克过滤行为（原 `undefined` 即默认放行，`partywide` 同样放行），
+> `performance`（-10% 等）仍由 keigenn 提供，不受影响。
+
+### `src/data/mitigationActions.ts`（可选，保持 action/status 分类对齐）
+
+可选地给对应 action 的 `category` 也追加 `'boss'`（雪仇 7535 / 牵制 7549 / 武装解除 2887 / 昏乱 7560，
+均 `['partywide','percentage']` → `[...,'boss']`）。仅用于技能层 UI 分类一致性，**计算不依赖此项**。
 
 ### `src/types/timeline.ts`
 

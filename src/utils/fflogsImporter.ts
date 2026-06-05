@@ -418,8 +418,35 @@ export function parseDamageEvents(
   classifyPartialAOE(damageEvents, composition)
   // 流水线最后：按 actionOverride 表强制改写 type，权威覆盖上面所有启发式判别
   applyActionTypeOverride(damageEvents)
+  // type 最终稳定后：把"部分 AOE（结算）"事件时间后移，使其稳定排在同刻全员 AOE 之后
+  shiftPartialFinalAoeTime(damageEvents)
 
   return damageEvents
+}
+
+/** "部分 AOE（结算）"事件相对同刻事件的时间后移量（秒） */
+const PARTIAL_FINAL_AOE_TIME_SHIFT = 0.1
+
+/**
+ * 把 type === 'partial_final_aoe' 的事件时间后移 PARTIAL_FINAL_AOE_TIME_SHIFT 秒。
+ *
+ * 部分 AOE 段的结算波次常与同刻的全员 AOE 同时出现。若两者落在同一时间点，
+ * 结算时先算全员 AOE（会清掉部分 AOE 段累计）再算部分 AOE 结算，就会按已被清掉的
+ * 段重复累计，算出预期外的多余伤害。后移让结算事件稳定排在全员 AOE 之后，规避该顺序问题。
+ *
+ * 必须在 type 最终稳定（applyActionTypeOverride）之后调用：被 override 改写成
+ * tankbuster / auto 的事件不应被后移。改时间后重新排序以维持 damageEvents 的升序不变量。
+ */
+function shiftPartialFinalAoeTime(damageEvents: DamageEvent[]): void {
+  let shifted = false
+  for (const event of damageEvents) {
+    if (event.type === 'partial_final_aoe') {
+      // 保留两位小数精度（与 relativeTime 一致），避免 0.1 浮点尾差
+      event.time = Math.round((event.time + PARTIAL_FINAL_AOE_TIME_SHIFT) * 100) / 100
+      shifted = true
+    }
+  }
+  if (shifted) damageEvents.sort((a, b) => a.time - b.time)
 }
 
 /**

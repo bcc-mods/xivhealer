@@ -1670,6 +1670,139 @@ describe('parseDamageEvents', () => {
       expect(result[0].type).toBe('aoe')
     })
   })
+
+  describe('partial_final_aoe 时间后移', () => {
+    it('partial_final_aoe 事件 time +0.1，partial_aoe / aoe 不变，且整体保持有序', () => {
+      const playerMap = new Map<number, V2Actor>([
+        [1, { id: 1, name: 'Tank1', type: 'Paladin' }],
+        [2, { id: 2, name: 'Tank2', type: 'Warrior' }],
+        [3, { id: 3, name: 'Healer1', type: 'WhiteMage' }],
+        [4, { id: 4, name: 'Healer2', type: 'Scholar' }],
+        [5, { id: 5, name: 'DPS1', type: 'Samurai' }],
+        [6, { id: 6, name: 'DPS2', type: 'BlackMage' }],
+        [7, { id: 7, name: 'DPS3', type: 'Bard' }],
+        [8, { id: 8, name: 'DPS4', type: 'Ninja' }],
+      ])
+      const abilityMap = makeAbilityMap(900001, 'Mech', 1024)
+
+      // 第一波（t=5）：只命中 3,4,5（partial_aoe）
+      // 第二波（t=10）：命中 6,7,8（partial_final_aoe，全员到齐清零）
+      // 第三波（t=15）：命中全部非T（aoe）
+      const wave = (t: number, targets: number[], packetID: number) =>
+        targets.map(targetID => ({
+          type: 'damage' as const,
+          packetID,
+          abilityGameID: 900001,
+          targetID,
+          unmitigatedAmount: 1000,
+          absorbed: 0,
+          amount: 800,
+          timestamp: fightStartTime + t * 1000,
+          sourceID: 999,
+        }))
+
+      const events = [
+        ...wave(5, [3, 4, 5], 1),
+        ...wave(10, [6, 7, 8], 2),
+        ...wave(15, [3, 4, 5, 6, 7, 8], 3),
+      ]
+
+      const composition = {
+        players: [
+          { id: 1, job: 'PLD' as const },
+          { id: 2, job: 'WAR' as const },
+          { id: 3, job: 'WHM' as const },
+          { id: 4, job: 'SCH' as const },
+          { id: 5, job: 'SAM' as const },
+          { id: 6, job: 'BLM' as const },
+          { id: 7, job: 'BRD' as const },
+          { id: 8, job: 'NIN' as const },
+        ],
+      }
+
+      const result = parseDamageEvents(
+        withCalculatedDamage(events),
+        fightStartTime,
+        playerMap,
+        abilityMap,
+        composition
+      )
+
+      expect(result.map(e => e.type)).toEqual(['partial_aoe', 'partial_final_aoe', 'aoe'])
+      // partial_final_aoe（原 t=10）后移 0.1s；partial_aoe / aoe 时间不动
+      expect(result.map(e => e.time)).toEqual([5, 10.1, 15])
+      // 偏移后整体仍按 time 升序
+      const times = result.map(e => e.time)
+      expect(times).toEqual([...times].sort((a, b) => a - b))
+    })
+
+    it('partial_final_aoe 与同刻全员 AOE 共存时，后移使其排在全员 AOE 之后', () => {
+      const playerMap = new Map<number, V2Actor>([
+        [1, { id: 1, name: 'Tank1', type: 'Paladin' }],
+        [2, { id: 2, name: 'Tank2', type: 'Warrior' }],
+        [3, { id: 3, name: 'Healer1', type: 'WhiteMage' }],
+        [4, { id: 4, name: 'Healer2', type: 'Scholar' }],
+        [5, { id: 5, name: 'DPS1', type: 'Samurai' }],
+        [6, { id: 6, name: 'DPS2', type: 'BlackMage' }],
+        [7, { id: 7, name: 'DPS3', type: 'Bard' }],
+        [8, { id: 8, name: 'DPS4', type: 'Ninja' }],
+      ])
+      // 两个不同技能：900001 用于部分 AOE 段，900002 用于同刻全员 AOE
+      const abilityMap = new Map([
+        [900001, { gameID: 900001, name: 'PartialMech', type: 1024 }],
+        [900002, { gameID: 900002, name: 'FullMech', type: 1024 }],
+      ])
+
+      const wave = (ability: number, t: number, targets: number[], packetID: number) =>
+        targets.map(targetID => ({
+          type: 'damage' as const,
+          packetID,
+          abilityGameID: ability,
+          targetID,
+          unmitigatedAmount: 1000,
+          absorbed: 0,
+          amount: 800,
+          timestamp: fightStartTime + t * 1000,
+          sourceID: 999,
+        }))
+
+      // t=5 部分命中 3,4,5；t=10 部分命中 6,7,8 完成结算（partial_final_aoe）；
+      // t=10 同刻另有全员 AOE（900002，命中全部非 T）
+      const events = [
+        ...wave(900001, 5, [3, 4, 5], 1),
+        ...wave(900001, 10, [6, 7, 8], 2),
+        ...wave(900002, 10, [3, 4, 5, 6, 7, 8], 3),
+      ]
+
+      const composition = {
+        players: [
+          { id: 1, job: 'PLD' as const },
+          { id: 2, job: 'WAR' as const },
+          { id: 3, job: 'WHM' as const },
+          { id: 4, job: 'SCH' as const },
+          { id: 5, job: 'SAM' as const },
+          { id: 6, job: 'BLM' as const },
+          { id: 7, job: 'BRD' as const },
+          { id: 8, job: 'NIN' as const },
+        ],
+      }
+
+      const result = parseDamageEvents(
+        withCalculatedDamage(events),
+        fightStartTime,
+        playerMap,
+        abilityMap,
+        composition
+      )
+
+      // 同刻全员 AOE 留在 t=10，partial_final_aoe 后移到 t=10.1 排在其后
+      const finalAoe = result.find(e => e.type === 'partial_final_aoe')
+      const fullAoe = result.find(e => e.type === 'aoe' && e.time === 10)
+      expect(fullAoe).toBeDefined()
+      expect(finalAoe?.time).toBe(10.1)
+      expect(result.indexOf(fullAoe!)).toBeLessThan(result.indexOf(finalAoe!))
+    })
+  })
 })
 
 describe('parseSyncEvents', () => {

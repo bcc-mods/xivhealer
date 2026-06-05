@@ -616,6 +616,20 @@ export default function PropertyPanel() {
           )}
         </div>
 
+        {/* 目标减是否生效 */}
+        <div className="flex items-center gap-2 h-8">
+          <Switch
+            checked={!event.targetMitigationDisabled}
+            onCheckedChange={checked =>
+              updateDamageEvent(event.id, {
+                targetMitigationDisabled: checked ? undefined : true,
+              })
+            }
+            disabled={isReadOnly}
+          />
+          <span className="text-xs text-muted-foreground shrink-0">目标减生效</span>
+        </div>
+
         {/* 部分 AOE 伤害详情（仅编辑模式 + HP 模拟开 + partial AOE + 有段快照） */}
         {!timeline.isReplayMode &&
           result &&

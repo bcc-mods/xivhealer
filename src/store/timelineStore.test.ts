@@ -195,6 +195,67 @@ describe('undo/redo - Y.UndoManager', () => {
     expect(useTimelineStore.getState().timeline!.castEvents[0].id).toBe('cast-1')
   })
 
+  it('应该能撤销删除伤害事件（单个 removeDamageEvent）', async () => {
+    await useTimelineStore.getState().openTimeline('test-undo-dmg', {
+      role: 'local',
+      seedContent: {
+        ...baseContent,
+        damageEvents: [
+          {
+            id: 'dmg-1',
+            name: '地火',
+            time: 10,
+            damage: 80000,
+            type: 'aoe',
+            damageType: 'magical',
+          },
+        ],
+      },
+    })
+    const store = useTimelineStore.getState()
+
+    store.removeDamageEvent('dmg-1')
+    expect(useTimelineStore.getState().timeline!.damageEvents).toHaveLength(0)
+
+    store.undo()
+    expect(useTimelineStore.getState().timeline!.damageEvents).toHaveLength(1)
+    expect(useTimelineStore.getState().timeline!.damageEvents[0].id).toBe('dmg-1')
+  })
+
+  it('应该能撤销批量删除（bulkDeleteSelection）', async () => {
+    await useTimelineStore.getState().openTimeline('test-undo-bulk', {
+      role: 'local',
+      seedContent: {
+        ...baseContent,
+        damageEvents: [
+          {
+            id: 'dmg-1',
+            name: '地火',
+            time: 10,
+            damage: 80000,
+            type: 'aoe',
+            damageType: 'magical',
+          },
+          {
+            id: 'dmg-2',
+            name: '月环',
+            time: 20,
+            damage: 90000,
+            type: 'aoe',
+            damageType: 'magical',
+          },
+        ],
+      },
+    })
+    const store = useTimelineStore.getState()
+    store.setSelection({ eventIds: ['dmg-1', 'dmg-2'], castEventIds: [], annotationIds: [] })
+    store.bulkDeleteSelection()
+    expect(useTimelineStore.getState().timeline!.damageEvents).toHaveLength(0)
+
+    store.undo()
+    expect(useTimelineStore.getState().timeline!.damageEvents).toHaveLength(2)
+  })
+
   it('应该能撤销阵容修改（含级联删除 castEvents）', async () => {
     await useTimelineStore.getState().openTimeline('test-undo-comp', {
       role: 'local',

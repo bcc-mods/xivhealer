@@ -217,6 +217,7 @@ function EncounterTable({
   isFiltered,
   importedSources,
   onImport,
+  defaultOpen = false,
 }: {
   encounter: RaidEncounter
   data: Top100Data | null | undefined
@@ -224,8 +225,10 @@ function EncounterTable({
   isFiltered: boolean
   importedSources: Set<string>
   onImport: (url: string) => void
+  /** 选项卡下只有一个榜单时默认展开 */
+  defaultOpen?: boolean
 }) {
-  const [isOpen, setIsOpen] = useState(false)
+  const [isOpen, setIsOpen] = useState(defaultOpen)
   const [showAll, setShowAll] = useState(false)
 
   // 应用过滤
@@ -498,7 +501,7 @@ function ProgressEncounterPanel({
         </div>
       )}
 
-      {/* 通关榜单：TOP100 数据非空时展示在进度卡片下方（复用阵容过滤） */}
+      {/* 通关榜单：TOP100 数据非空时展示在进度卡片下方（复用阵容过滤）。仅此一个榜单，默认展开 */}
       {hasRanking && encounter && (
         <EncounterTable
           encounter={encounter}
@@ -507,6 +510,7 @@ function ProgressEncounterPanel({
           isFiltered={isFiltered}
           importedSources={importedSources}
           onImport={onImport}
+          defaultOpen
         />
       )}
     </div>
@@ -662,6 +666,7 @@ export default function Top100Section() {
               isFiltered={filterMitigationKey !== null}
               importedSources={importedSources}
               onImport={setImportUrl}
+              defaultOpen={activeTier.encounters.length === 1}
             />
           ))}
         </div>

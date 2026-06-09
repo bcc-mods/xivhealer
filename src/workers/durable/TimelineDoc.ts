@@ -299,6 +299,16 @@ export class TimelineDoc extends DurableObject<Env> {
     return true
   }
 
+  /**
+   * 诊断反查用:返回该 DO 持久化的 timelineId(docId)。
+   * DO id 由 `idFromName(timelineId)` 单向派生、不可反推,但 DO 自身在 /connect 时
+   * 已把 timelineId 存进 storage('docId'),故可经 `idFromString(hex)` 直连后由它自报。
+   * 从未 /connect 过(无数据)的 DO 返回 null。
+   */
+  async getDocId(): Promise<string | null> {
+    return this.cachedDocId ?? null
+  }
+
   /** 公开读用:把当前合并状态投影成 Timeline JSON;空文档返回 null */
   async getSnapshotJson(): Promise<Timeline | null> {
     if (this.store.isEmpty()) return null

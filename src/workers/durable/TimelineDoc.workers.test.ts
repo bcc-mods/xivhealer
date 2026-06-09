@@ -244,6 +244,23 @@ describe('TimelineDoc WebSocket 接入', () => {
     })
   })
 
+  it('getDocId 返回持久化的 timelineId,可经 idFromString 反查', async () => {
+    const docName = 't-getdocid'
+    const stub = env.TIMELINE_DOC.get(env.TIMELINE_DOC.idFromName(docName))
+    await stub.fetch('https://do/connect', {
+      headers: { Upgrade: 'websocket', 'X-Timeline-Id': docName },
+    })
+    // 模拟拿到日志里的 DO id(hex),用 idFromString 还原后直连反查
+    const hex = env.TIMELINE_DOC.idFromName(docName).toString()
+    const reStub = env.TIMELINE_DOC.get(env.TIMELINE_DOC.idFromString(hex))
+    expect(await reStub.getDocId()).toBe(docName)
+  })
+
+  it('getDocId 对从未 /connect 的 DO 返回 null', async () => {
+    const stub = env.TIMELINE_DOC.get(env.TIMELINE_DOC.idFromName('t-getdocid-never'))
+    expect(await stub.getDocId()).toBeNull()
+  })
+
   describe('awareness snapshot on join', () => {
     it('新连接鉴权后立刻收到已在线连接的 awareness 快照', async () => {
       const docName = 't-awareness-snapshot'

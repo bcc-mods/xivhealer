@@ -13,6 +13,7 @@ import { statisticsRoutes } from './routes/statistics'
 import { encounterTemplatesRoutes } from './routes/encounterTemplates'
 import { samplesQueueRoutes } from './routes/samplesQueue'
 import { internalMigrateRoutes } from './routes/internalMigrate'
+import { internalDiagRoutes } from './routes/internalDiag'
 import { shareRoutes } from './routes/share'
 import { handleScheduled } from './scheduled'
 import { TimelineDoc } from './durable/TimelineDoc'
@@ -52,6 +53,7 @@ app.route('/api/statistics', statisticsRoutes)
 app.route('/api/encounter-templates', encounterTemplatesRoutes)
 app.route('/api/samples-queue', samplesQueueRoutes)
 app.route('/api/internal', internalMigrateRoutes)
+app.route('/api/internal', internalDiagRoutes)
 
 export { app }
 

@@ -252,11 +252,19 @@ export function createPlacementEngine(input: PlacementEngineInput): PlacementEng
       : defaultTimeline
 
     // 1. placement 层失效
+    //    cast 只存 trackGroup 父 id；变体在运行时按 buff 状态派生（resolveVariant）。
+    //    因此合法性按「组内任一变体在 t 合法」判定（与 computeTrackShadow /
+    //    computePlacementShadow 的成员并集一致），组内全员非法才算 placement_lost。
+    //    否则会把「父 id 自身在 buff 期内非法、但存在合法变体（如炽天附体期内的降临之章
+    //    37016）」误判成红框，且与该轨道空 shadow 自相矛盾。
     const placementLost = new Map<string, boolean>()
     for (const castEvent of effectiveEvents) {
       const action = actions.get(castEvent.actionId)
       if (!action) continue
       const t = castEvent.timestamp
+      const members = trackGroupMembers.get(effectiveTrackGroup(action)) ?? [action]
+      // ctx.action 不被 placement combinator 读取（读的是 statusTimelineByPlayer /
+      // castEvents / playerId），故一份 ctx 可供全组成员复用。
       const ctx: PlacementContext = {
         action,
         playerId: castEvent.playerId,
@@ -265,11 +273,11 @@ export function createPlacementEngine(input: PlacementEngineInput): PlacementEng
         actions,
         statusTimelineByPlayer: placementTimeline,
       }
-      const ok =
-        !action.placement ||
-        action.placement
-          .validIntervals(ctx)
-          .some(i => i.from - TIME_EPS <= t && t <= i.to + TIME_EPS)
+      const ok = members.some(
+        m =>
+          !m.placement ||
+          m.placement.validIntervals(ctx).some(i => i.from - TIME_EPS <= t && t <= i.to + TIME_EPS)
+      )
       if (!ok) placementLost.set(castEvent.id, true)
     }
 

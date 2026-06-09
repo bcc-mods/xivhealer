@@ -137,6 +137,12 @@ describe('createPlacementEngine — shadow / unique / findInvalid', () => {
     cooldown: 10,
     placement: whileStatus(BUFF),
   })
+  // 单成员组、只在 buff 期内合法：buff 窗口外放置 → 整组无合法变体 → placement_lost。
+  const gated = makeAction({
+    id: 3,
+    cooldown: 60,
+    placement: whileStatus(BUFF),
+  })
 
   const engine = createPlacementEngine({
     castEvents: [],
@@ -163,10 +169,10 @@ describe('createPlacementEngine — shadow / unique / findInvalid', () => {
     expect(r.ok).toBe(false)
   })
 
-  it('findInvalidCastEvents: 区分 placement_lost / resource_exhausted / both', () => {
+  it('findInvalidCastEvents: 区分 placement_lost / resource_exhausted', () => {
     const castEvents: CastEvent[] = [
-      // buff 期间放了 primary（t=45，避开下面 variant 的 CD 窗口 [25,35)/[28,38)）→ placement_lost
-      { id: 'bad1', actionId: 1, playerId: 10, timestamp: 45 } as unknown as CastEvent,
+      // gated（单成员组）放在 buff 窗口外 t=5 → 整组无合法变体 → placement_lost
+      { id: 'bad1', actionId: 3, playerId: 10, timestamp: 5 } as unknown as CastEvent,
       // variant 两次互相 CD 冲突：bad2 CD=[25,35)，bad3 t=28 落在 bad2 CD 内
       { id: 'bad2', actionId: 2, playerId: 10, timestamp: 25 } as unknown as CastEvent,
       { id: 'bad3', actionId: 2, playerId: 10, timestamp: 28 } as unknown as CastEvent,
@@ -176,6 +182,7 @@ describe('createPlacementEngine — shadow / unique / findInvalid', () => {
       actions: new Map([
         [1, primary],
         [2, variant],
+        [3, gated],
       ]),
       statusTimelineByPlayer: timeline,
     })

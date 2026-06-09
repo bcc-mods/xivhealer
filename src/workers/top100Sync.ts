@@ -93,7 +93,16 @@ export function extractFightStats(
   const maxHPByJob = extractMaxHPData(events, playerMap)
   const healByAbility = extractHealData(events)
 
-  const composition = parseComposition(report, fight.id)
+  // composition 必须按本场实际参战玩家过滤：report.friendlies 是整份 report
+  // 所有 pull 的玩家并集，往往多于本场 8 人。不过滤会让 classifyPartialAOE 的
+  // nonTankIds 被撑大，全员 AOE 永远凑不齐全覆盖 → 所有 aoe 退化成 partial_aoe。
+  // 与前端 parseFightImport 的 participantIds 推导口径保持一致。
+  const participantIds = new Set<number>()
+  for (const event of events) {
+    if (event.sourceID && playerMap.has(event.sourceID)) participantIds.add(event.sourceID)
+    if (event.targetID && playerMap.has(event.targetID)) participantIds.add(event.targetID)
+  }
+  const composition = parseComposition(report, fight.id, participantIds)
   const fullDamageEvents = parseDamageEvents(
     events,
     fight.startTime,

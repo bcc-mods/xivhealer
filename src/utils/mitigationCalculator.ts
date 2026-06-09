@@ -12,7 +12,7 @@ import type {
 } from '@/types/status'
 import type { CastEvent, DamageEvent, DamageType } from '@/types/timeline'
 import type { TimelineStatData } from '@/types/statData'
-import type { ActionExecutionContext } from '@/types/mitigation'
+import type { ActionExecutionContext, MitigationAction } from '@/types/mitigation'
 import type { HealSnapshot } from '@/types/healSnapshot'
 import type { HpTimelinePoint } from '@/types/hpTimeline'
 import { MITIGATION_DATA } from '@/data/mitigationActions'
@@ -26,6 +26,7 @@ import {
   type CastEndEntry,
 } from './castEffectiveEnd'
 import { formatTimeWithDecimal } from '@/utils/formatters'
+import { resolveVariant } from './placement/resolveVariant'
 
 /**
  * 多坦路径单坦克的计算结果
@@ -189,6 +190,12 @@ export interface SimulateOutput {
    * miss 时回退到 cast.timestamp + action.duration。分类与聚合见 utils/castEffectiveEnd.ts。
    */
   castEffectiveEndByCastEventId: Map<string, number>
+  /**
+   * castEvent.id → 该 cast 运行时推导出的具体变体 actionId。父 id 存于 castEvent.actionId，
+   * simulate 按时间顺序处理时用「截至该时刻 active 的 buff」推导 trackGroup 内应使用的变体。
+   * 单成员组返回父本身。渲染 / 导出读此字段，自身不推导。
+   */
+  resolvedVariantByCastId: Map<string, number>
   /** 所有治疗事件（cast + HoT tick）的 snapshot，按 time 升序 */
   healSnapshots: HealSnapshot[]
   /** HP 池演化序列（time 升序）；回放模式 / hp 池未初始化时为空数组 */
@@ -475,6 +482,15 @@ export class MitigationCalculator {
     const damageResults = new Map<string, CalculationResult>()
     const statusTimelineByPlayer: Map<number, Map<number, StatusInterval[]>> = new Map()
     const castEffectiveEndByCastEventId = new Map<string, number>()
+    const resolvedVariantByCastId = new Map<string, number>()
+    // 预建 trackGroup 成员表：父 id → members
+    const variantMembers = new Map<number, MitigationAction[]>()
+    for (const a of MITIGATION_DATA.actions) {
+      const gid = a.trackGroup ?? a.id
+      const arr = variantMembers.get(gid) ?? []
+      arr.push(a)
+      variantMembers.set(gid, arr)
+    }
     const castEndEntries: CastEndEntry[] = []
     const healSnapshots: HealSnapshot[] = []
     const hpTimeline: HpTimelinePoint[] = []
@@ -782,18 +798,30 @@ export class MitigationCalculator {
     // 由 historicalStatuses（advance 剔除的 buff）在 calculate Phase 1 找回，无需在
     // advance 终点上 hack。
     const processCast = (castEvent: CastEvent, advanceTarget: number) => {
-      const action = MITIGATION_DATA.actions.find(a => a.id === castEvent.actionId)
-      if (!action) return
+      // castEvent.actionId 现在语义是 trackGroup 父 id
+      const parent = MITIGATION_DATA.actions.find(a => a.id === castEvent.actionId)
+      if (!parent) return
       const prevState = currentState
       currentState = advanceToTime(currentState, lastAdvanceTime, advanceTarget)
       captureTransition(prevState, currentState, advanceTarget)
       lastAdvanceTime = advanceTarget
 
+      // 用「截至此刻 active 的 buff」推导具体变体（单成员组返回父本身）
+      const members = variantMembers.get(parent.id) ?? [parent]
+      const action = resolveVariant(
+        parent,
+        members,
+        castEvent.playerId,
+        castEvent.timestamp,
+        currentState.statuses
+      )
+      resolvedVariantByCastId.set(castEvent.id, action.id)
+
       if (!action.executor) return
       const before = currentState
       currentState = { ...currentState, timestamp: castEvent.timestamp }
       const ctx: ActionExecutionContext = {
-        actionId: castEvent.actionId,
+        actionId: action.id,
         useTime: castEvent.timestamp,
         partyState: currentState,
         sourcePlayerId: castEvent.playerId,
@@ -956,6 +984,7 @@ export class MitigationCalculator {
       damageResults,
       statusTimelineByPlayer,
       castEffectiveEndByCastEventId,
+      resolvedVariantByCastId,
       healSnapshots,
       hpTimeline,
     }

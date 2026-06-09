@@ -2820,3 +2820,34 @@ describe('目标减开关 (targetMitigationDisabled)', () => {
     expect(off.finalDamage).toBe(90000)
   })
 })
+
+describe('simulate → resolvedVariantByCastId', () => {
+  it('Seraphism 期内 37013→37016，期外保持 37013，自身 cast 原样', () => {
+    // 炽天附体 37014 @t=10（playerId=6）attach Seraphism 3885，持续 30s → 覆盖 [10, 40]
+    // 父 id 37013 @t=20：Seraphism 期内 → 推导成降临之章 37016
+    // 父 id 37013 @t=100：Seraphism 已过 → 保持意气轩昂之策 37013
+    const castEvents = [
+      { id: 'c-buff', actionId: 37014, playerId: 6, timestamp: 10 } as unknown as CastEvent,
+      { id: 'c-in', actionId: 37013, playerId: 6, timestamp: 20 } as unknown as CastEvent,
+      { id: 'c-out', actionId: 37013, playerId: 6, timestamp: 100 } as unknown as CastEvent,
+    ]
+    const calc = new MitigationCalculator()
+    const result = calc.simulate({
+      castEvents,
+      damageEvents: [
+        {
+          id: 'd1',
+          name: 'd1',
+          time: 200,
+          damage: 100000,
+          type: 'aoe',
+          damageType: 'physical',
+        } as DamageEvent,
+      ],
+      initialState: { players: [], statuses: [], timestamp: 0 },
+    })
+    expect(result.resolvedVariantByCastId.get('c-in')).toBe(37016)
+    expect(result.resolvedVariantByCastId.get('c-out')).toBe(37013)
+    expect(result.resolvedVariantByCastId.get('c-buff')).toBe(37014)
+  })
+})

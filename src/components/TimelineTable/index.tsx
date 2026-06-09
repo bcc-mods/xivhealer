@@ -159,9 +159,8 @@ export default function TimelineTableView() {
         return
       }
 
-      // 新增：先由 engine 选当前时刻唯一合法变体（buff 期 37013 列自动变 37016）；
-      // 未接入 engine / 单成员组时退化为传入的 track.actionId。
-      let resolvedActionId = track.actionId
+      // 新增：仅做「该时刻是否存在合法变体」的存在性校验（buff 期 37013 列是否可放）；
+      // 具体变体交给 simulate 运行时推导，此处写入父 id（groupId），变体不持久化。
       if (engine) {
         const member = engine.pickUniqueMember(groupId, track.playerId, event.time)
         if (!member) {
@@ -169,7 +168,6 @@ export default function TimelineTableView() {
           toast.error('无法添加技能', { description: unmetMsg ?? '此时刻不满足发动条件' })
           return
         }
-        resolvedActionId = member.id
       }
 
       // CD 冲突 / 资源耗尽 已由 pickUniqueMember 内部 canPlaceCastEvent 闭环过滤
@@ -182,7 +180,7 @@ export default function TimelineTableView() {
       // 远大于 0.1s）。
       addCastEvent({
         id: generateObjectId(),
-        actionId: resolvedActionId,
+        actionId: groupId,
         timestamp: event.time - CAST_ANCHOR_LEAD,
         playerId: track.playerId,
       })

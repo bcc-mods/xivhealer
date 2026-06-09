@@ -930,26 +930,26 @@ export default function TimelineCanvas({ width, height }: TimelineCanvasProps) {
   const addCastAt = (actionId: number, playerId: number, time: number) => {
     if (!timeline) return
 
-    let resolvedActionId = actionId
     const parent = actionMap.get(actionId)
+    const groupId = parent ? (parent.trackGroup ?? parent.id) : actionId
     if (engine && parent) {
-      const groupId = parent.trackGroup ?? parent.id
+      // 仅做「该时刻是否存在合法变体」的存在性校验；具体变体交给 simulate 运行时推导。
       const member = engine.pickUniqueMember(groupId, playerId, time)
       if (!member) {
         const unmetMsg = engine.getResourceUnmetMessageAt(parent, playerId, time)
         toast.error('无法添加技能', { description: unmetMsg ?? '此时刻不满足发动条件' })
         return
       }
-      resolvedActionId = member.id
     }
 
     // CD 冲突 / 资源耗尽 已由 pickUniqueMember 内部 canPlaceCastEvent 闭环过滤
     // （legal = placement ∩ resourceLegalIntervals）；此处不再重复 overlap 窗口检查——
     // 旧 checkOverlap 按 action.cooldown 硬窗口互斥，与多充能（慰藉/献奉）语义冲突。
+    // 写入父 id（groupId），变体不持久化。
 
     addCastEvent({
       id: generateObjectId(),
-      actionId: resolvedActionId,
+      actionId: groupId,
       timestamp: time,
       playerId,
     })
@@ -1111,33 +1111,17 @@ export default function TimelineCanvas({ width, height }: TimelineCanvasProps) {
     const { updateCastEvent } = useTimelineStore.getState()
     const existing = timeline?.castEvents.find(ce => ce.id === castEventId)
     if (!existing) return
-    // 拖到新位置后：若当前 actionId 在新时刻不合法，engine 给出同轨道 t 时刻的
-    // 唯一合法成员（变体自动切换：37013 ⇄ 37016）。engine 未就绪或成员选不出时
-    // 保留原 actionId（由红边框回溯提示非法）。
-    const currentAction = actionMap.get(existing.actionId)
-    let nextActionId = existing.actionId
-    if (engine && currentAction) {
-      const groupId = currentAction.trackGroup ?? currentAction.id
-      const canKeepCurrent = engine.canPlaceCastEvent(
-        currentAction,
-        existing.playerId,
-        newTime,
-        castEventId
-      ).ok
-      if (!canKeepCurrent) {
-        const member = engine.pickUniqueMember(groupId, existing.playerId, newTime, castEventId)
-        if (member) nextActionId = member.id
-      }
-    }
+    // 变体由 simulate 运行时推导，拖拽只改时间、不重写 actionId；
+    // 新位置若无合法变体由红框提示。
     const s = useTimelineStore.getState()
     const totalSelected =
       s.selectedEventIds.length + s.selectedCastEventIds.length + s.selectedAnnotationIds.length
     if (totalSelected > 1 && s.selectedCastEventIds.includes(castEventId)) {
-      // 多选：整体等距平移，以被拖动 cast 的原始时间戳为基准；跳过变体切换
+      // 多选：整体等距平移，以被拖动 cast 的原始时间戳为基准
       const orig = timeline?.castEvents.find(c => c.id === castEventId)?.timestamp ?? newTime
       s.bulkMoveSelection(newTime - orig)
     } else {
-      updateCastEvent(castEventId, { timestamp: newTime, actionId: nextActionId })
+      updateCastEvent(castEventId, { timestamp: newTime })
     }
     useTimelineStore.getState().setLocalDragging(null)
     endGroupDrag()

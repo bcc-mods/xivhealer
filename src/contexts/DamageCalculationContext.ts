@@ -6,6 +6,7 @@ const emptyContext: DamageCalculationResult = {
   results: new Map(),
   statusTimelineByPlayer: new Map(),
   castEffectiveEndByCastEventId: new Map(),
+  resolvedVariantByCastId: new Map(),
   healSnapshots: [],
   hpTimeline: [],
   removalTimelinesByExcludeId: new Map(),
@@ -24,6 +25,10 @@ export function useStatusTimelineByPlayer(): StatusTimelineByPlayer {
 
 export function useCastEffectiveEnd(): Map<string, number> {
   return useContext(DamageCalculationContext).castEffectiveEndByCastEventId
+}
+
+export function useResolvedVariantByCastId(): Map<string, number> {
+  return useContext(DamageCalculationContext).resolvedVariantByCastId
 }
 
 export function useRemovalTimelinesByExcludeId(): Map<string, StatusTimelineByPlayer> {

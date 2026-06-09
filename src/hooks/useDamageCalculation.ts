@@ -24,6 +24,8 @@ export interface DamageCalculationResult {
   results: Map<string, CalculationResult>
   statusTimelineByPlayer: StatusTimelineByPlayer
   castEffectiveEndByCastEventId: Map<string, number>
+  /** castEvent.id → 运行时推导出的具体变体 actionId（按 castId 索引，与 timestamp 无关） */
+  resolvedVariantByCastId: Map<string, number>
   healSnapshots: HealSnapshot[]
   hpTimeline: HpTimelinePoint[]
   /** 预算好的"假装某 cast 不存在"的 status timeline 表，供 PlacementEngine 同步查表 */
@@ -36,6 +38,7 @@ const EMPTY_RESULT: DamageCalculationResult = {
   results: new Map(),
   statusTimelineByPlayer: new Map(),
   castEffectiveEndByCastEventId: new Map(),
+  resolvedVariantByCastId: new Map(),
   healSnapshots: [],
   hpTimeline: [],
   removalTimelinesByExcludeId: new Map(),
@@ -123,6 +126,7 @@ export function useDamageCalculation(
             results: bundle.main.damageResults,
             statusTimelineByPlayer: bundle.main.statusTimelineByPlayer,
             castEffectiveEndByCastEventId: bundle.main.castEffectiveEndByCastEventId,
+            resolvedVariantByCastId: bundle.main.resolvedVariantByCastId,
             healSnapshots: bundle.main.healSnapshots,
             hpTimeline: bundle.main.hpTimeline,
             removalTimelinesByExcludeId: bundle.removalTimelinesByExcludeId,

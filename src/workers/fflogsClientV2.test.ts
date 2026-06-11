@@ -6,8 +6,22 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import { mapV2ReportToReport } from './fflogsClientV2'
+import { mapV2ReportToReport, EVENT_FETCH_SPECS } from './fflogsClientV2'
 import { buildBossIds } from '@/utils/fflogsImporter'
+
+describe('EVENT_FETCH_SPECS', () => {
+  it('包含 targetabilityupdate 抓取条目（服务端 filterExpression 过滤）', () => {
+    const spec = EVENT_FETCH_SPECS.find(s => s.filterType === 'targetabilityupdate')
+    expect(spec).toBeDefined()
+    expect(spec?.dataType).toBe('All')
+    expect(spec?.filterExpression).toBe('type="targetabilityupdate"')
+  })
+
+  it('既有抓取条目不带 filterExpression（不破坏既有抓取）', () => {
+    const casts = EVENT_FETCH_SPECS.find(s => s.dataType === 'Casts' && !s.hostilityType)
+    expect(casts?.filterExpression).toBeUndefined()
+  })
+})
 
 describe('mapV2ReportToReport', () => {
   const payload = {

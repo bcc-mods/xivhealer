@@ -112,6 +112,8 @@ export interface FFLogsEvent {
   duration?: number
   /** 目标实例 */
   targetInstance?: number
+  /** 可选中状态（targetabilityupdate 事件）：1=可选中，0=不可选中 */
+  targetable?: number
   /** 盾值吸收量 */
   absorb?: number
   /** 是否为 DOT/HOT tick */

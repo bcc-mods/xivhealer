@@ -130,6 +130,45 @@ export function mapV2ReportToReport(report: V2ReportPayload, reportCode: string)
   }
 }
 
+/** 单条事件抓取参数 */
+export type FetchSpec = {
+  dataType: string
+  hostilityType?: 'Friendlies' | 'Enemies'
+  includeResources?: boolean
+  /** 单页请求条数，默认 10000 */
+  limit?: number
+  /** 只取首页、不翻页（用于锚点类小请求） */
+  singlePage?: boolean
+  /** 仅保留该 type 的事件（其余丢弃，避免与其他 spec 重复） */
+  filterType?: string
+  /** FFLogs 服务端过滤表达式（如 type="targetabilityupdate"），让服务端只回匹配事件 */
+  filterExpression?: string
+}
+
+/**
+ * 事件抓取矩阵（每条一种类型，自动分页）：
+ * - Casts 额外追加一条 Enemies 请求（Boss 技能读条）
+ * - DamageTaken / Healing 需 includeResources 拿玩家资源快照
+ * - limitbreakupdate：仅首页锚点（零时间）
+ * - targetabilityupdate：全程分页，但服务端 filterExpression 过滤后返回量极小；
+ *   用于导入期重建敌方可选中区间（目标减无效判定）
+ */
+export const EVENT_FETCH_SPECS: FetchSpec[] = [
+  { dataType: 'Casts' },
+  { dataType: 'Casts', hostilityType: 'Enemies' },
+  { dataType: 'DamageTaken', includeResources: true },
+  { dataType: 'Healing', includeResources: true },
+  { dataType: 'CombatantInfo' },
+  { dataType: 'Debuffs' },
+  { dataType: 'Buffs' },
+  { dataType: 'All', limit: 200, singlePage: true, filterType: 'limitbreakupdate' },
+  {
+    dataType: 'All',
+    filterExpression: 'type="targetabilityupdate"',
+    filterType: 'targetabilityupdate',
+  },
+]
+
 export class FFLogsClientV2 {
   private clientId: string
   private clientSecret: string
@@ -443,35 +482,8 @@ export class FFLogsClientV2 {
   async getEvents(params: GetEventsParams): Promise<FFLogsEventsResponse> {
     const { reportCode, start, end } = params
 
-    // 每条请求的参数（hostilityType 默认 Friendlies，includeResources 默认 false）
-    // - Casts 额外追加一条 Enemies 请求（用于 Boss 技能读条）
-    // - DamageTaken / Healing 需要 includeResources 以拿到玩家资源快照
-    type FetchSpec = {
-      dataType: string
-      hostilityType?: 'Friendlies' | 'Enemies'
-      includeResources?: boolean
-      /** 单页请求条数，默认 10000 */
-      limit?: number
-      /** 只取首页、不翻页（用于锚点类小请求） */
-      singlePage?: boolean
-      /** 仅保留该 type 的事件（其余丢弃，避免与其他 spec 重复） */
-      filterType?: string
-    }
-    const fetchSpecs: FetchSpec[] = [
-      { dataType: 'Casts' },
-      { dataType: 'Casts', hostilityType: 'Enemies' },
-      { dataType: 'DamageTaken', includeResources: true },
-      { dataType: 'Healing', includeResources: true },
-      { dataType: 'CombatantInfo' },
-      { dataType: 'Debuffs' },
-      { dataType: 'Buffs' },
-      // 全类型首页（limit 200）只挑 limitbreakupdate：作为导入零时间锚点（极限技能槽在
-      // 战斗起点瞬间产生首条更新）。取不到则导入侧回退首次伤害，不阻断导入。
-      { dataType: 'All', limit: 200, singlePage: true, filterType: 'limitbreakupdate' },
-    ]
-
     const query = `
-      query GetEvents($code: String!, $startTime: Float, $endTime: Float, $dataType: EventDataType!, $hostilityType: HostilityType, $includeResources: Boolean, $limit: Int) {
+      query GetEvents($code: String!, $startTime: Float, $endTime: Float, $dataType: EventDataType!, $hostilityType: HostilityType, $includeResources: Boolean, $limit: Int, $filterExpression: String) {
         reportData {
           report(code: $code) {
             events(
@@ -482,6 +494,7 @@ export class FFLogsClientV2 {
               translate: false
               includeResources: $includeResources
               limit: $limit
+              filterExpression: $filterExpression
             ) {
               data
               nextPageTimestamp
@@ -506,6 +519,7 @@ export class FFLogsClientV2 {
           hostilityType: spec.hostilityType ?? 'Friendlies',
           includeResources: spec.includeResources ?? false,
           limit: spec.limit ?? 10000,
+          filterExpression: spec.filterExpression ?? null,
         })) as {
           reportData: {
             report: {
@@ -536,7 +550,7 @@ export class FFLogsClientV2 {
     }
 
     // 并行获取所有 spec 的事件（含 limitbreakupdate 锚点）
-    const results = await Promise.all(fetchSpecs.map(fetchAllEventsForSpec))
+    const results = await Promise.all(EVENT_FETCH_SPECS.map(fetchAllEventsForSpec))
 
     // 合并所有事件
     const allEvents = results.flat()

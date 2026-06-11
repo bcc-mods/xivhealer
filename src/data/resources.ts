@@ -60,6 +60,18 @@ export const RESOURCE_REGISTRY: Record<string, ResourceDefinition> = {
     regen: { interval: 20, amount: 1 },
     unmetMessage: '百合档数不足',
   },
+  'sge:addersgall': {
+    id: 'sge:addersgall',
+    name: '蛇胆',
+    job: 'SGE',
+    initial: 3, // 开场满档
+    max: 3,
+    // 「20s 回 1 档」。同 whm:lily：消耗驱动（每次消耗后 20s 补 1），非 t=0 固定节拍。
+    // 寄生清汁(24299) / 坚角清汁(24298) 共享本池，且各自仍保留 30s 自身 CD——故两 action 走
+    // 双门 gating（显式声明 __cd__:${id} required + 本池消费者）：蛇胆够也得等 CD，CD 好也得有蛇胆。
+    regen: { interval: 20, amount: 1 },
+    unmetMessage: '蛇胆档数不足',
+  },
 }
 
 // 模块导入时校验命名空间：每条显式 id 不得以 __cd__: 开头（保留给 compute 层合成的单充能池）。

@@ -1151,6 +1151,12 @@ export const MITIGATION_DATA: MitigationDataSource = {
         const partyState = createBuffExecutor(2618, 15)(ctx)
         return createRegenExecutor(2938, 15)({ ...ctx, partyState })
       },
+      // 双门 gating：__cd__:24298（自身 30s 重置，排第一供蓝条取值）+ sge:addersgall（蛇胆池，-1）。
+      // 蛇胆够也得等自身 CD 转好；自身 CD 转好也得有蛇胆才能用。
+      resourceEffects: [
+        { resourceId: '__cd__:24298', delta: -1, required: true },
+        { resourceId: 'sge:addersgall', delta: -1 },
+      ],
       statDataEntries: [{ type: 'heal', key: 1002938, label: 'HoT' }],
     },
     {
@@ -1162,7 +1168,25 @@ export const MITIGATION_DATA: MitigationDataSource = {
       duration: 0,
       cooldown: 30,
       executor: createHealExecutor(),
+      // 双门 gating：__cd__:24299（自身 30s 重置，排第一供蓝条取值）+ sge:addersgall（蛇胆池，-1）。
+      // 见坚角清汁同款说明：与坚角清汁共享蛇胆池，但各自 CD 独立。
+      resourceEffects: [
+        { resourceId: '__cd__:24299', delta: -1, required: true },
+        { resourceId: 'sge:addersgall', delta: -1 },
+      ],
       statDataEntries: [{ type: 'heal', key: 24299 }],
+    },
+    {
+      id: 24309,
+      name: '根素',
+      icon: '/i/003000/003677.png',
+      jobs: ['SGE'],
+      category: ['self'],
+      duration: 0,
+      cooldown: 90,
+      // 纯蛇胆生成器：游戏内不附加任何状态 → 省略 executor（simulator 对无 executor 的 cast 跳过状态演化）。
+      // 纯产出 +1 蛇胆（compute 层 clamp 到 max=3）。无消费者 → 仍合成 __cd__:24309 保留自身 90s CD。
+      resourceEffects: [{ resourceId: 'sge:addersgall', delta: 1 }],
     },
     {
       id: 24300,

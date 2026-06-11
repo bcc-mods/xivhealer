@@ -152,6 +152,9 @@ export type FetchSpec = {
  * - limitbreakupdate：仅首页锚点（零时间）
  * - targetabilityupdate：全程分页，但服务端 filterExpression 过滤后返回量极小；
  *   用于导入期重建敌方可选中区间（目标减无效判定）
+ *
+ * 注：limitbreakupdate / targetabilityupdate 的 filterType 仅作客户端二次过滤（双保险），
+ * 服务端 filterExpression 才是返回量收敛的主手段——勿因"有 filterType"而去掉 filterExpression。
  */
 export const EVENT_FETCH_SPECS: FetchSpec[] = [
   { dataType: 'Casts' },

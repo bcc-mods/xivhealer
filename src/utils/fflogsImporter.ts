@@ -77,6 +77,55 @@ function resolveFightStartTime(events: FFLogsEvent[], fallback: number): number 
   return findLimitBreakTimestamp(events) ?? findFirstDamageTimestamp(events, fallback)
 }
 
+/** 可选中状态切换点 */
+export interface TargetabilityToggle {
+  /** 报告相对毫秒（与伤害事件 timestamp 同域） */
+  timestamp: number
+  /** 该时刻起是否可选中 */
+  targetable: boolean
+}
+
+/**
+ * 由 targetabilityupdate 事件重建每个敌方 actor 的可选中状态切换点。
+ * 按 targetID 分组（sourceID===targetID，忽略 instance——boss 单实例、多实例的是小怪，
+ * 后者本就被非-boss 规则无条件判无效），按 timestamp 升序。
+ * 首切换点之前由 isTargetableAt 约定为"默认可选中"。无此类事件的 actor 不入表。
+ */
+export function buildTargetabilityIntervals(
+  events: FFLogsEvent[]
+): Map<number, TargetabilityToggle[]> {
+  const map = new Map<number, TargetabilityToggle[]>()
+  for (const e of events) {
+    if (e.type !== 'targetabilityupdate' || e.targetID === undefined) continue
+    const list = map.get(e.targetID) ?? []
+    list.push({ timestamp: e.timestamp, targetable: e.targetable === 1 })
+    map.set(e.targetID, list)
+  }
+  for (const list of map.values()) list.sort((a, b) => a.timestamp - b.timestamp)
+  return map
+}
+
+/**
+ * 查询 actor 在某时刻（报告相对毫秒）是否可选中。
+ * - 未跟踪的 actor（无 targetabilityupdate 事件）→ 默认可选中（向后兼容）。
+ * - 早于首切换点 → 默认可选中（boss 开场可选中）。
+ * - 否则取最后一个 timestamp <= ts 的切换点状态。
+ */
+export function isTargetableAt(
+  intervals: Map<number, TargetabilityToggle[]>,
+  actorId: number,
+  timestamp: number
+): boolean {
+  const list = intervals.get(actorId)
+  if (!list || list.length === 0) return true
+  let state = true
+  for (const toggle of list) {
+    if (toggle.timestamp <= timestamp) state = toggle.targetable
+    else break
+  }
+  return state
+}
+
 /**
  * 解析小队阵容
  * V2: actors(type:"Player") 已过滤，无 fights 数组

@@ -14,6 +14,8 @@ import {
   parseStatData,
   buildBossIds,
   parseFightImport,
+  buildTargetabilityIntervals,
+  isTargetableAt,
 } from './fflogsImporter'
 import type { FFLogsAbility, FFLogsReport, FFLogsEvent } from '@/types/fflogs'
 import type { Composition } from '@/types/timeline'
@@ -2208,6 +2210,67 @@ describe('buildBossIds', () => {
       { id: 200, guid: 2, name: 'Y', type: 'NPC' },
     ]
     expect(buildBossIds(enemies, 'Z').size).toBe(0)
+  })
+})
+
+describe('buildTargetabilityIntervals / isTargetableAt', () => {
+  const ev = (timestamp: number, id: number, targetable: number) =>
+    ({
+      type: 'targetabilityupdate',
+      timestamp,
+      sourceID: id,
+      targetID: id,
+      targetable,
+    }) as FFLogsEvent
+
+  it('按 targetID 分组并按时间升序', () => {
+    const m = buildTargetabilityIntervals([ev(200, 11, 1), ev(100, 11, 0), ev(150, 21, 0)])
+    expect(m.get(11)?.map(t => t.timestamp)).toEqual([100, 200])
+    expect(m.get(11)?.map(t => t.targetable)).toEqual([false, true])
+    expect(m.get(21)?.length).toBe(1)
+  })
+
+  it('未跟踪 actor 默认可选中', () => {
+    expect(isTargetableAt(buildTargetabilityIntervals([]), 11, 500)).toBe(true)
+  })
+
+  it('早于首切换点默认可选中；边界取该点状态', () => {
+    const m = buildTargetabilityIntervals([ev(100, 11, 0), ev(200, 11, 1)])
+    expect(isTargetableAt(m, 11, 50)).toBe(true) // 早于首点
+    expect(isTargetableAt(m, 11, 100)).toBe(false) // 边界=该点状态
+    expect(isTargetableAt(m, 11, 150)).toBe(false) // 不可选中区间内
+    expect(isTargetableAt(m, 11, 200)).toBe(true) // 恢复
+  })
+
+  it('忽略 instance：多实例事件仍按 targetID 归并', () => {
+    const m = buildTargetabilityIntervals([
+      {
+        type: 'targetabilityupdate',
+        timestamp: 100,
+        sourceID: 31,
+        sourceInstance: 1,
+        targetID: 31,
+        targetInstance: 1,
+        targetable: 0,
+      } as FFLogsEvent,
+      {
+        type: 'targetabilityupdate',
+        timestamp: 100,
+        sourceID: 31,
+        sourceInstance: 2,
+        targetID: 31,
+        targetInstance: 2,
+        targetable: 0,
+      } as FFLogsEvent,
+    ])
+    expect(m.get(31)?.length).toBe(2)
+  })
+
+  it('非 targetabilityupdate 事件被忽略', () => {
+    const m = buildTargetabilityIntervals([
+      { type: 'damage', timestamp: 100, targetID: 11 } as FFLogsEvent,
+    ])
+    expect(m.size).toBe(0)
   })
 })
 

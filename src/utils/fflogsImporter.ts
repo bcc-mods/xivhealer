@@ -186,7 +186,9 @@ export function parseDamageEvents(
   composition?: Composition,
   bossIds?: Set<number>,
   /** sourceID → actor 名映射，编排层用 report.enemies 建好传入；仅用于填 damageSource */
-  sourceNames?: Map<number, string>
+  sourceNames?: Map<number, string>,
+  /** actorId → 可选中切换点；来源在伤害时刻不可选中时，目标减判无效 */
+  targetability?: Map<number, TargetabilityToggle[]>
 ): DamageEvent[] {
   const TANK_JOBS = getTankJobs()
 
@@ -434,8 +436,14 @@ export function parseDamageEvents(
     const isAutoAttack = detailIsAutoAttack.get(firstDetail) ?? false
 
     const sourceId = detailSourceIds.get(firstDetail) ?? 0
-    const targetMitigationDisabled =
-      bossIds && bossIds.size > 0 && sourceId !== 0 && !bossIds.has(sourceId) ? true : undefined
+    const sourceIsNonBoss =
+      !!bossIds && bossIds.size > 0 && sourceId !== 0 && !bossIds.has(sourceId)
+    // 来源已知且在该伤害时刻不可选中（用 raw timestamp，与 targetabilityupdate 同为报告相对毫秒域）
+    const sourceUntargetable =
+      !!targetability &&
+      sourceId !== 0 &&
+      !isTargetableAt(targetability, sourceId, firstDetail.timestamp)
+    const targetMitigationDisabled = sourceIsNonBoss || sourceUntargetable ? true : undefined
     const damageSource = sourceId !== 0 ? sourceNames?.get(sourceId) : undefined
 
     damageEvents.push({
@@ -928,6 +936,7 @@ export function parseFightImport(
   const bossIds = buildBossIds(report.enemies, fight.name)
   const enemyNames = new Map<number, string>()
   report.enemies?.forEach(e => enemyNames.set(e.id, e.name))
+  const targetability = buildTargetabilityIntervals(events)
   const damageEvents = parseDamageEvents(
     events,
     fightStartTime,
@@ -935,7 +944,8 @@ export function parseFightImport(
     abilityMap,
     composition,
     bossIds,
-    enemyNames
+    enemyNames,
+    targetability
   )
   const castEvents = parseCastEvents(events, fightStartTime, playerMap)
   const syncEvents = parseSyncEvents(events, fightStartTime, playerMap, abilityMap)

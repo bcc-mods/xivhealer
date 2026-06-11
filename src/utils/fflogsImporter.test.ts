@@ -2328,4 +2328,64 @@ describe('parseDamageEvents 目标减自动判定', () => {
     const result = parseDamageEvents(withCalc(events), fightStartTime, playerMap, abilityMap)
     expect(result.every(e => e.targetMitigationDisabled === undefined)).toBe(true)
   })
+
+  const taEvent = (timestamp: number, id: number, targetable: number) =>
+    ({
+      type: 'targetabilityupdate',
+      timestamp,
+      sourceID: id,
+      targetID: id,
+      targetable,
+    }) as FFLogsEvent
+
+  it('boss 来源在不可选中时段 → disabled', () => {
+    const targetability = buildTargetabilityIntervals([taEvent(fightStartTime + 3000, 500, 0)])
+    const result = parseDamageEvents(
+      withCalc(events),
+      fightStartTime,
+      playerMap,
+      abilityMap,
+      undefined,
+      new Set([500]),
+      undefined,
+      targetability
+    )
+    const fromBoss = result.find(e => Math.abs(e.time - 5) < 0.6)
+    expect(fromBoss?.targetMitigationDisabled).toBe(true)
+  })
+
+  it('boss 来源在可选中时段 → 不标记', () => {
+    const targetability = buildTargetabilityIntervals([
+      taEvent(fightStartTime + 3000, 500, 0),
+      taEvent(fightStartTime + 4000, 500, 1),
+    ])
+    const result = parseDamageEvents(
+      withCalc(events),
+      fightStartTime,
+      playerMap,
+      abilityMap,
+      undefined,
+      new Set([500]),
+      undefined,
+      targetability
+    )
+    const fromBoss = result.find(e => Math.abs(e.time - 5) < 0.6)
+    expect(fromBoss?.targetMitigationDisabled).toBeUndefined()
+  })
+
+  it('bossIds 为空 + 来源不可选中 → 仍 disabled（通用规则不依赖 boss 检测）', () => {
+    const targetability = buildTargetabilityIntervals([taEvent(fightStartTime + 3000, 500, 0)])
+    const result = parseDamageEvents(
+      withCalc(events),
+      fightStartTime,
+      playerMap,
+      abilityMap,
+      undefined,
+      undefined,
+      undefined,
+      targetability
+    )
+    const fromBoss = result.find(e => Math.abs(e.time - 5) < 0.6)
+    expect(fromBoss?.targetMitigationDisabled).toBe(true)
+  })
 })

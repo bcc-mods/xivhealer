@@ -150,4 +150,6 @@ export const SOUMA_SYNC_RULES: ReadonlyMap<number, SoumaSyncRule> = new Map<numb
   [0xb24d, { type: 'cast', window: [60, 60], syncOnce: true, battleOnce: true }],
   // 极恩欧 无光的世界
   [0xc36d, { type: 'cast', window: [60, 60], syncOnce: true, battleOnce: true }],
+  // 妖星乱舞绝境战 闹哄哄魂击
+  [0xc2dc, { type: 'cast', window: [60, 60], syncOnce: true, battleOnce: true }],
 ])

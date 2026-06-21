@@ -443,6 +443,13 @@ export const STATUS_EXTRAS: Record<number, StatusExtras> = {
     isFriendly: true,
     executor: regenStatusExecutor,
   },
+  2710: {
+    name: '生命回生法',
+    category: ['self', 'target'],
+    isFriendly: true,
+    maxHP: 1.1,
+    selfHeal: 1.1,
+  },
 
   // 占星术士
   1224: {

@@ -60,6 +60,22 @@ export const RESOURCE_REGISTRY: Record<string, ResourceDefinition> = {
     regen: { interval: 20, amount: 1 },
     unmetMessage: '百合档数不足',
   },
+  'whm:divine': {
+    id: 'whm:divine',
+    name: '神祝祷充能',
+    job: 'WHM',
+    initial: 2,
+    max: 2,
+    regen: { interval: 30, amount: 1 },
+  },
+  'ast:intersection': {
+    id: 'ast:intersection',
+    name: '天星交错充能',
+    job: 'AST',
+    initial: 2,
+    max: 2,
+    regen: { interval: 30, amount: 1 },
+  },
   'sge:addersgall': {
     id: 'sge:addersgall',
     name: '蛇胆',

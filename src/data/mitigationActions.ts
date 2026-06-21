@@ -211,8 +211,6 @@ export const MITIGATION_DATA: MitigationDataSource = {
       name: '原初的勇猛',
       icon: '/i/002000/002567.png',
       jobs: ['WAR'],
-      // 对指定队友释放：10% 减伤(原初的武猛)、血潮、血烟(盾) 全部归目标，施法者本人
-      // 只得命中回血（未建模为减伤）。故为 target，而非 self。
       category: ['target', 'percentage', 'shield'],
       duration: 8,
       cooldown: 25,
@@ -285,7 +283,7 @@ export const MITIGATION_DATA: MitigationDataSource = {
       name: '至黑之夜',
       icon: '/i/003000/003081.png',
       jobs: ['DRK'],
-      category: ['self', 'shield'],
+      category: ['self', 'target', 'shield'],
       duration: 7,
       cooldown: 15,
       executor: createShieldExecutor(1178, 7),
@@ -570,6 +568,28 @@ export const MITIGATION_DATA: MitigationDataSource = {
       executor: createHealExecutor(),
       statDataEntries: [{ type: 'heal', key: 3571 }],
     },
+    {
+      id: 7432,
+      name: '神祝祷',
+      icon: '/i/002000/002638.png',
+      jobs: ['WHM'],
+      category: ['self', 'target', 'shield'],
+      duration: 15,
+      cooldown: 30,
+      executor: createShieldExecutor(1218, 15),
+      statDataEntries: [{ type: 'shield', key: 1218 }],
+      resourceEffects: [{ resourceId: 'whm:divine', delta: -1 }],
+    },
+    {
+      id: 25861,
+      name: '水流幕',
+      icon: '/i/002000/002648.png',
+      jobs: ['WHM'],
+      category: ['self', 'target', 'percentage'],
+      duration: 8,
+      cooldown: 60,
+      executor: createBuffExecutor(2708, 8),
+    },
 
     // 学者 (SCH)
     // 展开战术 - 复制目标的鼓舞盾到所有成员（模拟为群体单盾）
@@ -652,7 +672,16 @@ export const MITIGATION_DATA: MitigationDataSource = {
         { type: 'critHeal', key: 37013 },
       ],
     },
-
+    {
+      id: 25867,
+      name: '生命回生法',
+      icon: '/i/002000/002877.png',
+      jobs: ['SCH'],
+      category: ['self', 'target'],
+      duration: 10,
+      cooldown: 60,
+      executor: createBuffExecutor(2710, 10),
+    },
     {
       id: 37014,
       name: '炽天附体',
@@ -1104,6 +1133,49 @@ export const MITIGATION_DATA: MitigationDataSource = {
         const baseAmount = Math.round(healOfEarth * (200 / 720)) + Math.round(accDamage * 0.5)
         return createHealExecutor({ fixedAmount: baseAmount })({ ...ctx, partyState })
       },
+    },
+    {
+      id: 16556,
+      name: '天星交错',
+      icon: '/i/003000/003556.png',
+      jobs: ['AST'],
+      category: ['self', 'target', 'shield'],
+      duration: 30,
+      cooldown: 60,
+      executor: createShieldExecutor(1889, 30),
+      statDataEntries: [{ type: 'shield', key: 1889 }],
+      resourceEffects: [{ resourceId: 'ast:intersection', delta: -1 }],
+    },
+    {
+      id: 25873,
+      name: '擢升',
+      icon: '/i/003000/003561.png',
+      jobs: ['AST'],
+      category: ['self', 'target', 'percentage'],
+      duration: 8,
+      cooldown: 60,
+      executor: createBuffExecutor(2717, 8),
+    },
+    {
+      id: 37025,
+      name: '建筑神之塔',
+      icon: '/i/003000/003115.png',
+      jobs: ['AST'],
+      category: ['self', 'target', 'shield'],
+      duration: 30,
+      cooldown: 60,
+      executor: createShieldExecutor(3891, 15),
+      statDataEntries: [{ type: 'shield', key: 3891 }],
+    },
+    {
+      id: 37027,
+      name: '世界树之干',
+      icon: '/i/003000/003111.png',
+      jobs: ['AST'],
+      category: ['self', 'target', 'percentage'],
+      duration: 15,
+      cooldown: 60,
+      executor: createBuffExecutor(3890, 15),
     },
 
     // 贤者 (SGE)

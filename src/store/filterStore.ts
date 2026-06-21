@@ -57,7 +57,9 @@ export const BUILTIN_PRESETS: FilterPreset[] = [
     name: '仅坦克',
     rule: {
       damage: e => TANK_DAMAGE_TYPES.includes(e.type),
-      action: (_a, job) => getJobRole(job) === 'tank',
+      action: (a, job) =>
+        getJobRole(job) === 'tank' ||
+        (getJobRole(job) === 'healer' && a.category.includes('target')),
     },
   },
   {

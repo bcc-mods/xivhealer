@@ -1366,6 +1366,20 @@ export const MITIGATION_DATA: MitigationDataSource = {
       executor: createRegenExecutor(3899, 20),
       statDataEntries: [{ type: 'heal', key: 1003899, label: '幸福' }],
     },
+    {
+      id: 24303,
+      name: '白牛清汁',
+      icon: '/i/003000/003671.png',
+      jobs: ['SGE'],
+      category: ['self', 'target', 'percentage'],
+      duration: 15,
+      cooldown: 45,
+      executor: createBuffExecutor(2619, 15),
+      resourceEffects: [
+        { resourceId: '__cd__:24303', delta: -1, required: true },
+        { resourceId: 'sge:addersgall', delta: -1 },
+      ],
+    },
 
     // ==================== 近战 DPS ====================
     // 牵制 - 近战 DPS 目标减伤

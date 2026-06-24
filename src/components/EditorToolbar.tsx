@@ -20,6 +20,8 @@ import {
   BoxSelect,
   MoreHorizontal,
   Copy,
+  Wand2,
+  Loader2,
 } from 'lucide-react'
 import { useTimelineStore } from '@/store/timelineStore'
 import { useUIStore } from '@/store/uiStore'
@@ -62,6 +64,7 @@ const ExportExcelDialog = lazy(() => import('./ExportExcelDialog'))
 const ExportSoumaDialog = lazy(() => import('./ExportSoumaDialog'))
 const ImportIntoTimelineDialog = lazy(() => import('./ImportIntoTimelineDialog'))
 import { useEncounterStatistics } from '@/hooks/useEncounterStatistics'
+import { useAutoMitigate } from '@/hooks/useAutoMitigate'
 import { track } from '@/utils/analytics'
 
 interface ShareRole {
@@ -131,6 +134,8 @@ export default function EditorToolbar({
   const contentReason = editLock.reasonOf('content')
   /** 系统强制只读（非用户手动锁）时，锁按钮不可由用户切换 */
   const lockForced = contentReason !== null && contentReason !== 'manual'
+
+  const { isOptimizing, run: runAutoMitigate } = useAutoMitigate()
 
   const encounterId = timeline?.encounter?.id
   const statisticsQuery = useEncounterStatistics(encounterId)
@@ -489,6 +494,25 @@ export default function EditorToolbar({
                           ? '只读 · 连接中断'
                           : '只读'}
                   </TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7"
+                      disabled={!editLock.can('content') || isOptimizing}
+                      onClick={runAutoMitigate}
+                      aria-label="自动减伤"
+                    >
+                      {isOptimizing ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Wand2 className="h-4 w-4" />
+                      )}
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">自动放置减伤（最小化承受总伤）</TooltipContent>
                 </Tooltip>
               </>
             )}

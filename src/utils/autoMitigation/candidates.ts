@@ -43,6 +43,7 @@ export function generateCandidates(input: OptimizeInput, engine: PlacementEngine
     for (const action of input.actions.values()) {
       if (action.hidden) continue
       if (effectiveTrackGroup(action) !== action.id) continue // 只放 trackGroup 父
+      if (!action.category.includes('partywide')) continue // 仅团辅减伤；忽略单体/自减
       if (!action.jobs.includes(player.job)) continue
 
       const legal = engine.getValidIntervals(action, player.id)

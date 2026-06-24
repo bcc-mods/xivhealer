@@ -70,6 +70,24 @@ describe('generateCandidates', () => {
     expect(cands.length).toBe(0)
   })
 
+  it('非 partywide 的 action（单体/自减）不产候选', () => {
+    const selfMit = action({ id: 100, category: ['self', 'target', 'percentage'] })
+    const cands = generateCandidates(
+      input([selfMit], [dmg('x', 10)]),
+      fakeEngine([{ from: 0, to: 100 }])
+    )
+    expect(cands.length).toBe(0)
+  })
+
+  it('partywide 的 action 正常产候选', () => {
+    const partyMit = action({ id: 100, category: ['partywide', 'shield'] })
+    const cands = generateCandidates(
+      input([partyMit], [dmg('x', 10)]),
+      fakeEngine([{ from: 0, to: 100 }])
+    )
+    expect(cands.some(c => c.covers.has('x'))).toBe(true)
+  })
+
   it('同刻语义锁定：start === e.time 的候选不覆盖 e；严格早于 e.time 的起点才覆盖', () => {
     // duration=15，合法窗口 [0, 100)
     // 断点集中会出现 start = e.time（左沿对齐事件），

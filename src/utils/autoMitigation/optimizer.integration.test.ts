@@ -49,9 +49,16 @@ describe('runOptimize（集成）', () => {
     expect(out.summary.castsAdded).toBeGreaterThan(0)
   })
 
-  it('确定性：同 seed 同结果（硬断言）', () => {
-    const a = runOptimize(input)
-    const b = runOptimize(input)
+  it('确定性：同 seed + 固定时钟 → 同结果（硬断言）', () => {
+    // 决定性时钟：每次 now() 固定步进，使 phase-3 迭代次数与挂钟无关、两次运行完全一致。
+    // 真实挂钟预算下 phase-3 迭代次数随负载变化，故"可复现"只在固定时钟下成立（见设计 §8.6）。
+    const makeDeterministicDeps = () => {
+      const base = defaultDeps()
+      let clock = 0
+      return { ...base, now: () => (clock += 10) }
+    }
+    const a = runOptimize(input, makeDeterministicDeps())
+    const b = runOptimize(input, makeDeterministicDeps())
     expect(a.addedCastEvents.map(c => `${c.actionId}@${c.timestamp}#${c.playerId}`)).toEqual(
       b.addedCastEvents.map(c => `${c.actionId}@${c.timestamp}#${c.playerId}`)
     )

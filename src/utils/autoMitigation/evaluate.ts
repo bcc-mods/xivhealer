@@ -15,6 +15,9 @@ export function createEvaluator(input: OptimizeInput): Evaluator {
   const calc = createMitigationCalculator()
   const inScopeIds = new Set(input.damageEvents.filter(isInScope).map(e => e.id))
   return casts => {
+    // 故意不传 tankPlayerIds：优化作用域仅 AOE 类事件（isInScope），而 tankPlayerIds 只影响
+    // 坦专（tankbuster/auto，includeTankOnly）分支，对 in-scope 事件无作用，省略后评估值与
+    // 编辑器实时重算一致。若将来作用域扩到坦专事件，这里必须补回 tankPlayerIds 以免静默分歧。
     const out = calc.simulate({
       castEvents: casts,
       damageEvents: input.damageEvents,

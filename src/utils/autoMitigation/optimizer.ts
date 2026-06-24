@@ -1,7 +1,19 @@
 import { TIME_EPS } from '@/utils/placement/types'
 import type { CastEvent } from '@/types/timeline'
-import type { OptimizeInput, OptimizeDeps, Candidate, EvalResult, InfeasibleEvent } from './types'
+import type {
+  OptimizeInput,
+  OptimizeDeps,
+  OptimizeOutput,
+  Candidate,
+  EvalResult,
+  InfeasibleEvent,
+} from './types'
 import { applyMove, proposeMove } from './moves'
+import { createPlacementEngine } from '@/utils/placement/engine'
+import { generateId } from '@/utils/id'
+import { mulberry32 } from './prng'
+import { createEvaluator } from './evaluate'
+import { generateCandidates } from './candidates'
 
 export interface OptimizerContext {
   input: OptimizeInput
@@ -181,4 +193,54 @@ export function phase3LocalSearch(
   }
   ctx.added = bestAdded
   ctx.evalState = bestEval
+}
+
+export function defaultDeps(): OptimizeDeps {
+  return {
+    createEvaluator,
+    buildPlacementEngine: (input, casts, eval0) =>
+      createPlacementEngine({
+        castEvents: casts,
+        actions: input.actions,
+        statusTimelineByPlayer: eval0.statusTimelineByPlayer,
+        resolvedVariantByCastId: eval0.resolvedVariantByCastId,
+      }),
+    generateId,
+    now: () => Date.now(),
+    makeRandom: mulberry32,
+  }
+}
+
+/** 顶层编排：候选生成 → 阶段 1 → 阶段 2 → 阶段 3 → 汇总。 */
+export function runOptimize(
+  input: OptimizeInput,
+  deps: OptimizeDeps = defaultDeps()
+): OptimizeOutput {
+  const start = deps.now()
+  const budget = input.options?.timeBudgetMs ?? 3000
+  const rng = deps.makeRandom(input.options?.seed ?? 1)
+
+  // 候选基于 locked-only 基线的 status 时间线生成（起点固定，合法性后续动态复查）
+  const evaluator = deps.createEvaluator(input)
+  const baseEval = evaluator(input.lockedCastEvents)
+  const baseEngine = deps.buildPlacementEngine(input, input.lockedCastEvents, baseEval)
+  const cands = generateCandidates(input, baseEngine)
+
+  const ctx = makeContext(input, deps, cands)
+  const totalBefore = ctx.evalState.total
+
+  phase1Feasibility(ctx)
+  phase2Minimize(ctx)
+  phase3LocalSearch(ctx, rng, start + budget)
+
+  return {
+    addedCastEvents: ctx.added,
+    infeasibleEvents: [...ctx.infeasible.values()],
+    summary: {
+      totalDamageBefore: totalBefore,
+      totalDamageAfter: ctx.evalState.total,
+      castsAdded: ctx.added.length,
+      elapsedMs: deps.now() - start,
+    },
+  }
 }

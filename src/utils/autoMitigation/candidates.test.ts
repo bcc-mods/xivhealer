@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { generateCandidates } from './candidates'
+import { generateCandidates, isGcdMit } from './candidates'
 import type { OptimizeInput } from './types'
 import type { MitigationAction } from '@/types/mitigation'
 import type { DamageEvent } from '@/types/timeline'
@@ -77,6 +77,23 @@ describe('generateCandidates', () => {
       fakeEngine([{ from: 0, to: 100 }])
     )
     expect(cands.length).toBe(0)
+  })
+
+  it('partywide 但纯治疗（无 percentage/shield）不产候选', () => {
+    const healOnly = action({ id: 100, category: ['partywide', 'heal'] })
+    const cands = generateCandidates(
+      input([healOnly], [dmg('x', 10)]),
+      fakeEngine([{ from: 0, to: 100 }])
+    )
+    expect(cands.length).toBe(0)
+  })
+
+  it('isGcdMit：短CD(<5)的减伤/盾算 GCD 减伤；纯治疗与长CD不算', () => {
+    expect(isGcdMit(action({ cooldown: 1, category: ['partywide', 'percentage'] }))).toBe(true)
+    expect(isGcdMit(action({ cooldown: 2.5, category: ['partywide', 'shield'] }))).toBe(true)
+    expect(isGcdMit(action({ cooldown: 2, category: ['partywide', 'heal'] }))).toBe(false) // 纯治疗
+    expect(isGcdMit(action({ cooldown: 60, category: ['partywide', 'percentage'] }))).toBe(false) // 长CD
+    expect(isGcdMit(action({ cooldown: 5, category: ['partywide', 'shield'] }))).toBe(false) // 边界:5 不算
   })
 
   it('partywide 的 action 正常产候选', () => {

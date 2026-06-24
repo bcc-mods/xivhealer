@@ -13,7 +13,7 @@ import { createPlacementEngine } from '@/utils/placement/engine'
 import { generateId } from '@/utils/id'
 import { mulberry32 } from './prng'
 import { createEvaluator } from './evaluate'
-import { generateCandidates } from './candidates'
+import { generateCandidates, isGcdMit } from './candidates'
 
 export interface OptimizerContext {
   input: OptimizeInput
@@ -173,6 +173,64 @@ export function phase2Minimize(ctx: OptimizerContext): void {
 }
 
 /**
+ * 危险阈值占比：复用 deriveLethalDangerous 的"剩血<5%"口径（finalDamage ≥ 满血×95%）。
+ * GCD 减伤兜底只在事件减伤后仍达到此阈值时才介入。
+ */
+const DANGER_FRACTION = 0.95
+
+/**
+ * GCD 减伤兜底（规则一）：在非 GCD 减伤都生效（phase1/2/3 跑完）后，
+ * 对仍"危险"（finalDamage ≥ 满血×95%）的 in-scope 事件，才动用 GCD 减伤候选去压。
+ * 最危险优先；每次选对目标事件降伤最大的 GCD 候选，经 tryAccept 保证合法+可行。
+ * 可能顺带把 phase1 标记的 infeasible 事件救回（GCD 把它压到不致死）。
+ */
+export function gcdFallback(ctx: OptimizerContext, gcdCands: Candidate[]): void {
+  const shelved = new Set<string>()
+  for (;;) {
+    // 仍危险且未尽力的事件中，按 finalDamage/refHP 比值取最危险者
+    let target: string | null = null
+    let worst = -Infinity
+    for (const [id, pe] of ctx.evalState.perEvent) {
+      if (!pe.inScope || shelved.has(id) || pe.referenceMaxHP == null) continue
+      if (pe.finalDamage < pe.referenceMaxHP * DANGER_FRACTION) continue // 已不危险
+      const ratio = pe.finalDamage / pe.referenceMaxHP
+      if (ratio > worst) {
+        worst = ratio
+        target = id
+      }
+    }
+    if (target === null) break
+
+    const before = ctx.evalState.perEvent.get(target)!.finalDamage
+    let best: Candidate | null = null
+    let bestAfter = Infinity
+    for (const c of gcdCands) {
+      if (!c.covers.has(target)) continue
+      const next = probe(ctx, c)
+      if (!next) continue
+      const after = next.perEvent.get(target)!.finalDamage
+      if (after < before - TIME_EPS && after < bestAfter) {
+        best = c
+        bestAfter = after
+      }
+    }
+    if (!best) {
+      shelved.add(target) // GCD 也压不动，放弃
+      continue
+    }
+    if (!tryAccept(ctx, best)) shelved.add(target)
+  }
+
+  // GCD 可能把某些 infeasible（仍致死）事件救回 → 清理已不致死的
+  for (const id of [...ctx.infeasible.keys()]) {
+    const pe = ctx.evalState.perEvent.get(id)
+    if (pe && pe.referenceMaxHP != null && pe.finalDamage < pe.referenceMaxHP) {
+      ctx.infeasible.delete(id)
+    }
+  }
+}
+
+/**
  * 阶段 3：局部搜索精修，吃满 deadline 前的预算。维护 best 快照，
  * 预算到点回退到 best（不退化）。本版只接受严格改进的 move。
  */
@@ -227,12 +285,17 @@ export function runOptimize(
   const baseEngine = deps.buildPlacementEngine(input, input.lockedCastEvents, baseEval)
   const cands = generateCandidates(input, baseEngine)
 
-  const ctx = makeContext(input, deps, cands)
+  // 规则一：GCD 减伤降优先级——主阶段只用非 GCD 候选，GCD 留作兜底
+  const gcdCands = cands.filter(c => isGcdMit(c.action))
+  const mainCands = cands.filter(c => !isGcdMit(c.action))
+
+  const ctx = makeContext(input, deps, mainCands)
   const totalBefore = ctx.evalState.total
 
   phase1Feasibility(ctx)
   phase2Minimize(ctx)
   phase3LocalSearch(ctx, rng, start + budget)
+  gcdFallback(ctx, gcdCands) // 非 GCD 都生效后，对仍危险事件才动用 GCD 减伤
 
   return {
     addedCastEvents: ctx.added,

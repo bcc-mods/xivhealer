@@ -1,8 +1,21 @@
 import { effectiveTrackGroup } from '@/types/mitigation'
+import type { MitigationAction } from '@/types/mitigation'
 import { TIME_EPS } from '@/utils/placement/types'
 import type { Interval, PlacementEngine } from '@/utils/placement/types'
 import { isInScope } from './scope'
 import type { OptimizeInput, Candidate } from './types'
+
+/**
+ * GCD 减伤技：短 CD（<5s，即 GCD 量级）且提供减伤/盾（category 含 percentage 或 shield）。
+ * 纯 GCD 治疗（仅 heal）不算——它不进伤害公式、本就零增益。
+ * 这类技能在排布上被降优先级：仅在非 GCD 减伤都生效后事件仍危险时作兜底（见 optimizer.gcdFallback）。
+ */
+export function isGcdMit(action: MitigationAction): boolean {
+  return (
+    action.cooldown < 5 &&
+    (action.category.includes('percentage') || action.category.includes('shield'))
+  )
+}
 
 function inSomeLegal(t: number, legal: Interval[]): boolean {
   // 半开区间 [from, to) 成员判定：下界留 EPS 容差吸收"贴合 from"的浮点噪声；
@@ -43,7 +56,9 @@ export function generateCandidates(input: OptimizeInput, engine: PlacementEngine
     for (const action of input.actions.values()) {
       if (action.hidden) continue
       if (effectiveTrackGroup(action) !== action.id) continue // 只放 trackGroup 父
-      if (!action.category.includes('partywide')) continue // 仅团辅减伤；忽略单体/自减
+      // 仅团辅减伤/盾：partywide 且 (percentage 或 shield)；剔除单体/自减与纯治疗
+      if (!action.category.includes('partywide')) continue
+      if (!action.category.includes('percentage') && !action.category.includes('shield')) continue
       if (!action.jobs.includes(player.job)) continue
 
       const legal = engine.getValidIntervals(action, player.id)

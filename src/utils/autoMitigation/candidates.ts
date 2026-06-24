@@ -28,6 +28,12 @@ function dropDominated(cands: Candidate[]): Candidate[] {
 /**
  * 候选生成（§4 断点集 Bcov ∪ Bwin；Bvar 留待计划二接入变体感知）。
  * 候选起点固定于断点；合法性后续由 PlacementEngine 动态复查。
+ *
+ * 注意：covers 是基于 locked 基线 status 时间线的静态结构预测（lower-bound 启发式），
+ * 生成后不随接受动态重算。真正的权威闸是 probe 的真实 simulate 增益 +
+ * canPlaceCastEvent 合法性；设计 §5 的 recomputeLegality（接受后刷新受影响候选的
+ * 合法窗口/覆盖）留待计划二。当前实现因此 sound（不产出非法/致死）但非 complete，
+ * 符合 §8.4 的 best-effort 声明。
  */
 export function generateCandidates(input: OptimizeInput, engine: PlacementEngine): Candidate[] {
   const inScopeEvents = input.damageEvents.filter(isInScope)

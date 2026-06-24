@@ -8,7 +8,7 @@ import type { PlacementEngine } from '@/utils/placement/types'
 export interface OptimizeOptions {
   timeBudgetMs?: number // 默认 ≈ 3000
   seed?: number // 确定性 PRNG 播种，默认 1
-  aggressive?: boolean // 启发剪枝开关（计划二）；默认 true
+  aggressive?: boolean // 计划二启发剪枝总开关；当前版本未接线（inert），保留以固化公共 API
 }
 
 export interface OptimizeInput {

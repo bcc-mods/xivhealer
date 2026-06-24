@@ -166,8 +166,9 @@ export function phase2Minimize(ctx: OptimizerContext): void {
       if (gain > (best?.gain ?? TIME_EPS)) best = { c, next, gain }
     }
     if (!best || best.gain <= TIME_EPS) break
-    if (tryAccept(ctx, best.c)) placed.add(keyOf(best.c))
-    else placed.add(keyOf(best.c)) // 复查失败也标记，避免死循环
+    // 接受与否都标记 placed：复查失败也不再重试该候选，保证终止。
+    tryAccept(ctx, best.c)
+    placed.add(keyOf(best.c))
   }
 }
 

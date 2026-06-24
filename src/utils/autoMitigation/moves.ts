@@ -12,7 +12,7 @@ export interface MoveProposal {
  * 应用一个 move（撤 remove、加 add），仅当：保持合法 + 不新增致死 + 总伤严格下降 时接受。
  * rng 预留给退火接受准则（计划二）；本版只接受严格改进。
  */
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- reserved for plan-2 annealing accept-worse path
 export function applyMove(ctx: OptimizerContext, mv: MoveProposal, _rng: () => number): boolean {
   const removeIds = new Set(mv.remove.map(c => c.id))
   const kept = ctx.added.filter(c => !removeIds.has(c.id))

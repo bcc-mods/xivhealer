@@ -22,7 +22,6 @@ import { useEncounterTemplate } from '@/hooks/useEncounterTemplate'
 import ImportFFLogsDialog from '@/components/ImportFFLogsDialog'
 import JobIcon from '@/components/JobIcon'
 import { JOB_MAP } from '@/data/jobMap'
-import { buildMitigationKey } from '@/utils/rosterUtils'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import type { Job } from '@/types/timeline'
@@ -98,17 +97,18 @@ function buildFFLogsUrl(reportCode: string, fightID: number): string {
   return `https://www.fflogs.com/reports/${reportCode}#fight=${fightID}`
 }
 
-// 检查 subset 是否是 superset 的子序列（两者都已排序）
-function isSubsequence(subset: number[], superset: number[]): boolean {
-  let i = 0
-  let j = 0
-  while (i < subset.length && j < superset.length) {
-    if (subset[i] === superset[j]) {
-      i++
-    }
-    j++
+// 检查阵容是否包含所有被选职业（按重数的多重集子集判定）
+function compositionContainsJobs(composition: string[], filterJobs: Job[]): boolean {
+  const counts = new Map<string, number>()
+  for (const job of composition) {
+    counts.set(job, (counts.get(job) ?? 0) + 1)
   }
-  return i === subset.length
+  for (const job of filterJobs) {
+    const remaining = counts.get(job) ?? 0
+    if (remaining <= 0) return false
+    counts.set(job, remaining - 1)
+  }
+  return true
 }
 
 // ---- 子组件 ----
@@ -213,7 +213,7 @@ function CompositionFilter({
 function EncounterTable({
   encounter,
   data,
-  filterMitigationKey,
+  filterJobs,
   isFiltered,
   importedSources,
   onImport,
@@ -221,7 +221,7 @@ function EncounterTable({
 }: {
   encounter: RaidEncounter
   data: Top100Data | null | undefined
-  filterMitigationKey: number[] | null
+  filterJobs: Job[] | null
   isFiltered: boolean
   importedSources: Set<string>
   onImport: (url: string) => void
@@ -231,13 +231,11 @@ function EncounterTable({
   const [isOpen, setIsOpen] = useState(defaultOpen)
   const [showAll, setShowAll] = useState(false)
 
-  // 应用过滤
+  // 应用过滤：阵容须包含所有被选职业
   const filteredEntries =
     data?.entries.filter(entry => {
-      if (!filterMitigationKey || filterMitigationKey.length === 0) return true
-      // 根据 composition 计算 mitigationKey
-      const entryMitigationKey = buildMitigationKey(entry.composition)
-      return isSubsequence(filterMitigationKey, entryMitigationKey)
+      if (!filterJobs || filterJobs.length === 0) return true
+      return compositionContainsJobs(entry.composition, filterJobs)
     }) ?? []
 
   const hasData = filteredEntries.length > 0
@@ -392,14 +390,14 @@ function EncounterTable({
 function ProgressEncounterPanel({
   tier,
   top100Data,
-  filterMitigationKey,
+  filterJobs,
   isFiltered,
   importedSources,
   onImport,
 }: {
   tier: RaidTier
   top100Data: Record<string, Top100Data | null> | undefined
-  filterMitigationKey: number[] | null
+  filterJobs: Job[] | null
   isFiltered: boolean
   importedSources: Set<string>
   onImport: (url: string) => void
@@ -506,7 +504,7 @@ function ProgressEncounterPanel({
         <EncounterTable
           encounter={encounter}
           data={rankingData}
-          filterMitigationKey={filterMitigationKey}
+          filterJobs={filterJobs}
           isFiltered={isFiltered}
           importedSources={importedSources}
           onImport={onImport}
@@ -573,8 +571,8 @@ export default function Top100Section() {
 
   const activeTier = RAID_TIERS[activeTierIdx]
 
-  // 计算过滤用的 mitigationKey
-  const filterMitigationKey = selectedJobs.length > 0 ? buildMitigationKey(selectedJobs) : null
+  // 过滤用的职业列表
+  const filterJobs = selectedJobs.length > 0 ? selectedJobs : null
 
   return (
     <section>
@@ -641,8 +639,8 @@ export default function Top100Section() {
         <ProgressEncounterPanel
           tier={activeTier}
           top100Data={data}
-          filterMitigationKey={filterMitigationKey}
-          isFiltered={filterMitigationKey !== null}
+          filterJobs={filterJobs}
+          isFiltered={filterJobs !== null}
           importedSources={importedSources}
           onImport={setImportUrl}
         />
@@ -662,8 +660,8 @@ export default function Top100Section() {
               key={encounter.id}
               encounter={encounter}
               data={data?.[encounter.id]}
-              filterMitigationKey={filterMitigationKey}
-              isFiltered={filterMitigationKey !== null}
+              filterJobs={filterJobs}
+              isFiltered={filterJobs !== null}
               importedSources={importedSources}
               onImport={setImportUrl}
               defaultOpen={activeTier.encounters.length === 1}

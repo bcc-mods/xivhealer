@@ -156,3 +156,6 @@ export const HP_CURVE_HEIGHT = 60
  * 初始值本身无意义：首帧 `visible=false`，且处理器在显示前总会先设好真实 points。
  */
 export const CROSSHAIR_LINE_POINTS: number[] = [0, 0, 0, 0]
+
+/** 伤害事件卡片最小宽度（px）。无读条 / 读条极短时兜底，保证文字可读。 */
+export const MIN_CARD_WIDTH = 150

@@ -221,6 +221,10 @@ export interface DamageEvent {
    * 仅供人工核对 AOE 释放范围异常，对减伤计算无任何影响。可手动编辑。
    */
   damageSource?: string
+  /** 读条开始时间（秒）。与 castEndTime 成对存在；无读条时两者皆 undefined。 */
+  castStartTime?: number
+  /** 读条结束时间（秒）。与 castStartTime 成对存在。 */
+  castEndTime?: number
 }
 
 /**

@@ -72,6 +72,10 @@ export interface V2DamageEvent {
   tmd?: boolean
   /** 伤害来源标记（actor 名）；仅人工核对用，不参与计算 */
   ds?: string
+  /** castStartTime（读条开始，秒） */
+  cs?: number
+  /** castEndTime（读条结束，秒） */
+  ce?: number
 }
 
 export interface V2CastEvents {

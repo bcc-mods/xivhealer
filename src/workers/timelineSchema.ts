@@ -43,6 +43,8 @@ const V2DamageEventSchema = v.object({
   dt: v.union([v.literal(0), v.literal(1), v.literal(2)]),
   st: v.optional(v.number()),
   pdd: v.optional(v.array(V2PlayerDamageDetailSchema)),
+  cs: v.optional(v.number()),
+  ce: v.optional(v.number()),
 })
 
 const V2CastEventsSchema = v.object({

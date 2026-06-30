@@ -725,3 +725,45 @@ describe('parseFromAny', () => {
     expect(result.castEvents.some(c => c.actionId === 37016)).toBe(false)
   })
 })
+
+describe('castWindow 序列化', () => {
+  function roundtripDamageEvent(ev: import('@/types/timeline').DamageEvent) {
+    const tl: Timeline = {
+      ...makeEditorTimeline(),
+      damageEvents: [ev],
+    }
+    const v2 = toV2(tl)
+    const back = hydrateFromV2(v2, { id: 'tl_cast_test' })
+    return back.damageEvents[0]
+  }
+
+  it('toV2/fromV2 保留 castStartTime/castEndTime', () => {
+    const ev: import('@/types/timeline').DamageEvent = {
+      id: 'x',
+      name: 'A',
+      time: 10,
+      damage: 1000,
+      type: 'aoe',
+      damageType: 'magical',
+      castStartTime: 5.5,
+      castEndTime: 9.7,
+    }
+    const back = roundtripDamageEvent(ev)
+    expect(back.castStartTime).toBe(5.5)
+    expect(back.castEndTime).toBe(9.7)
+  })
+
+  it('未设置读条时不产生 castStartTime/castEndTime', () => {
+    const ev: import('@/types/timeline').DamageEvent = {
+      id: 'y',
+      name: 'B',
+      time: 3,
+      damage: 50,
+      type: 'auto',
+      damageType: 'physical',
+    }
+    const back = roundtripDamageEvent(ev)
+    expect(back.castStartTime).toBeUndefined()
+    expect(back.castEndTime).toBeUndefined()
+  })
+})

@@ -25,7 +25,7 @@ import { normalizeActionId } from './normalizeActionId'
 import { classifyPartialAOE } from './partialAoeClassifier'
 import { TANK_BUSTER_ACTION_IDS, AUTO_ATTACK_ACTION_IDS } from '@/data/actionOverride'
 import { getEncounterWithTier } from '@/data/raidEncounters'
-import { extractBossCasts, attachCastWindows } from './castWindow'
+import { extractBossCasts, attachCastWindows } from './castWindowImport'
 
 // actionChinese.json 为上游全量映射；action.json 为本地补充的额外 actionId → 中文名
 // （如 RSV 占位 id），后者覆盖前者以便就近修正翻译

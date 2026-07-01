@@ -19,6 +19,7 @@ import type { CalculationResult } from '@/utils/mitigationCalculator'
 import type { MitigationAction } from '@/types/mitigation'
 import {
   TIME_COL_WIDTH,
+  CAST_START_COL_WIDTH,
   NAME_COL_WIDTH,
   ORIGINAL_DAMAGE_COL_WIDTH,
   ACTUAL_DAMAGE_COL_WIDTH,
@@ -46,6 +47,7 @@ interface TableDataRowProps {
   calculationResult: CalculationResult | undefined
   showOriginalDamage: boolean
   showActualDamage: boolean
+  showCastStartTime: boolean
   /** 点击事件名时回调，传入事件 id（用于触发 PropertyPanel 打开） */
   onSelect: (eventId: string) => void
   /** 点击技能单元格切换放置状态 */
@@ -102,6 +104,7 @@ export default function TableDataRow({
   calculationResult,
   showOriginalDamage,
   showActualDamage,
+  showCastStartTime,
   onSelect,
   onCellToggle,
   isReadOnly,
@@ -130,8 +133,10 @@ export default function TableDataRow({
     hasOverkill
   )
 
-  // 计算粘性左偏移
+  // 计算粘性左偏移（咏唱开始列在判定时间列左侧）
   let leftOffset = 0
+  const castLeft = leftOffset
+  if (showCastStartTime) leftOffset += CAST_START_COL_WIDTH
   const timeLeft = leftOffset
   leftOffset += TIME_COL_WIDTH
   const nameLeft = leftOffset
@@ -149,6 +154,14 @@ export default function TableDataRow({
 
   return (
     <tr className="group" style={{ height: ROW_HEIGHT }}>
+      {showCastStartTime && (
+        <td
+          className={`${stickyCell} ${stickyHoverClass} z-10 px-2 text-right tabular-nums`}
+          style={{ width: CAST_START_COL_WIDTH, minWidth: CAST_START_COL_WIDTH, left: castLeft }}
+        >
+          {event.castStartTime != null ? formatTimeWithDecimal(event.castStartTime) : '-'}
+        </td>
+      )}
       <td
         className={`${stickyCell} ${stickyHoverClass} z-10 px-2 text-right tabular-nums`}
         style={{ width: TIME_COL_WIDTH, minWidth: TIME_COL_WIDTH, left: timeLeft }}

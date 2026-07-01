@@ -48,6 +48,7 @@ import AddEventDialog from '../AddEventDialog'
 import {
   HEADER_HEIGHT,
   TIME_COL_WIDTH,
+  CAST_START_COL_WIDTH,
   NAME_COL_WIDTH,
   ORIGINAL_DAMAGE_COL_WIDTH,
   ACTUAL_DAMAGE_COL_WIDTH,
@@ -65,6 +66,7 @@ export default function TimelineTableView() {
   const actions = useMitigationStore(s => s.actions)
   const showOriginalDamage = useUIStore(s => s.showOriginalDamage)
   const showActualDamage = useUIStore(s => s.showActualDamage)
+  const showCastStartTime = useUIStore(s => s.showCastStartTime)
   const skillTracks = useSkillTracks()
   const calculationResults = useDamageCalculationResults()
   const removalTimelinesByExcludeId = useRemovalTimelinesByExcludeId()
@@ -369,6 +371,7 @@ export default function TimelineTableView() {
 
   // 表格各列显式宽度之和，用于限定注释行 sticky div 的最大宽度
   const tableWidth =
+    (showCastStartTime ? CAST_START_COL_WIDTH : 0) +
     TIME_COL_WIDTH +
     NAME_COL_WIDTH +
     (showOriginalDamage ? ORIGINAL_DAMAGE_COL_WIDTH : 0) +
@@ -410,6 +413,7 @@ export default function TimelineTableView() {
             actionsById={actionsById}
             showOriginalDamage={showOriginalDamage}
             showActualDamage={showActualDamage}
+            showCastStartTime={showCastStartTime}
           />
           <tbody>
             {rows.map(row =>
@@ -427,6 +431,7 @@ export default function TimelineTableView() {
                   calculationResult={calculationResults.get(row.id)}
                   showOriginalDamage={showOriginalDamage}
                   showActualDamage={showActualDamage}
+                  showCastStartTime={showCastStartTime}
                   onSelect={selectEvent}
                   onCellToggle={handleCellToggle}
                   isReadOnly={isReadOnly}
@@ -438,12 +443,13 @@ export default function TimelineTableView() {
                   restColSpan={restColSpan}
                   wrapperWidth={wrapperWidth}
                   tableWidth={tableWidth}
+                  showCastStartTime={showCastStartTime}
                 />
               )
             )}
             {!isReadOnly && (
               <AddDamageRow
-                totalColSpan={1 + restColSpan}
+                totalColSpan={1 + restColSpan + (showCastStartTime ? 1 : 0)}
                 wrapperWidth={wrapperWidth}
                 tableWidth={tableWidth}
                 onClick={() => setShowAddDialog(true)}

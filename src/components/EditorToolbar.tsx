@@ -108,6 +108,8 @@ export default function EditorToolbar({
     showOriginalDamage,
     toggleShowActualDamage,
     toggleShowOriginalDamage,
+    showCastStartTime,
+    toggleShowCastStartTime,
     enableHpSimulation,
     toggleEnableHpSimulation,
     canvasTool,
@@ -430,6 +432,15 @@ export default function EditorToolbar({
                       }}
                     >
                       原始伤害
+                    </DropdownMenuCheckboxItem>
+                    <DropdownMenuCheckboxItem
+                      checked={showCastStartTime}
+                      onCheckedChange={checked => {
+                        track('view-toggle-cast-start-time', { checked })
+                        toggleShowCastStartTime()
+                      }}
+                    >
+                      咏唱开始时间
                     </DropdownMenuCheckboxItem>
                   </DropdownMenuSubContent>
                 </DropdownMenuSub>

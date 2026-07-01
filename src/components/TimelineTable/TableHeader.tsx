@@ -14,6 +14,7 @@ import type { SkillTrack } from '@/utils/skillTracks'
 import type { MitigationAction } from '@/types/mitigation'
 import {
   TIME_COL_WIDTH,
+  CAST_START_COL_WIDTH,
   NAME_COL_WIDTH,
   ORIGINAL_DAMAGE_COL_WIDTH,
   ACTUAL_DAMAGE_COL_WIDTH,
@@ -26,6 +27,7 @@ interface TableHeaderProps {
   actionsById: Map<number, MitigationAction>
   showOriginalDamage: boolean
   showActualDamage: boolean
+  showCastStartTime: boolean
 }
 
 export default function TableHeader({
@@ -33,11 +35,14 @@ export default function TableHeader({
   actionsById,
   showOriginalDamage,
   showActualDamage,
+  showCastStartTime,
 }: TableHeaderProps) {
   const { showTooltip, toggleTooltip, hideTooltip } = useTooltipStore()
 
-  // 计算粘性左侧列的累积 left 值
+  // 计算粘性左侧列的累积 left 值（咏唱开始列在判定时间列左侧）
   let leftOffset = 0
+  const castLeft = leftOffset
+  if (showCastStartTime) leftOffset += CAST_START_COL_WIDTH
   const timeLeft = leftOffset
   leftOffset += TIME_COL_WIDTH
   const nameLeft = leftOffset
@@ -55,11 +60,19 @@ export default function TableHeader({
   return (
     <thead>
       <tr style={{ height: HEADER_HEIGHT }}>
+        {showCastStartTime && (
+          <th
+            className={`${stickyCellClass} top-0 z-30 text-right px-2`}
+            style={{ width: CAST_START_COL_WIDTH, minWidth: CAST_START_COL_WIDTH, left: castLeft }}
+          >
+            咏唱开始
+          </th>
+        )}
         <th
           className={`${stickyCellClass} top-0 z-30 text-right px-2`}
           style={{ width: TIME_COL_WIDTH, minWidth: TIME_COL_WIDTH, left: timeLeft }}
         >
-          时间
+          判定时间
         </th>
         <th
           className={`${stickyCellClass} top-0 z-30 text-left px-2`}

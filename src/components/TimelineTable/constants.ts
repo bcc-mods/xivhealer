@@ -5,6 +5,9 @@
 /** 时间列宽度（px） */
 export const TIME_COL_WIDTH = 72
 
+/** 咏唱开始时间列宽度（px） */
+export const CAST_START_COL_WIDTH = 72
+
 /** 事件名列宽度（px） */
 export const NAME_COL_WIDTH = 128
 

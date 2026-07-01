@@ -122,3 +122,81 @@ describe('attachCastWindows', () => {
     expect(manual.castStartTime).toBeUndefined()
   })
 })
+
+describe('attachCastWindows 名称兜底（读条 id ≠ 伤害 id 但同名）', () => {
+  it('id 落空但同名 + 提供解析器 → 名称兜底命中', () => {
+    const resolve = (id: number) => (id === 11111 ? '灭杀' : undefined)
+    const boss = [bc('begincast', 50, 11111, 1000, 2000), bc('cast', 50, 11111, 3000)]
+    const evs = [dmg('灭杀', 22222, 3100)] // 伤害 id 22222 与读条 id 11111 不同，但同名
+    attachCastWindows(evs, boss, FS, resolve)
+    expect(evs[0].castStartTime).toBe(0)
+    expect(evs[0].castEndTime).toBe(2.0)
+  })
+
+  it('无解析器时不做名称兜底', () => {
+    const boss = [bc('begincast', 50, 11111, 1000, 2000), bc('cast', 50, 11111, 3000)]
+    const evs = [dmg('灭杀', 22222, 3100)]
+    attachCastWindows(evs, boss, FS) // 不传 resolver
+    expect(evs[0].castStartTime).toBeUndefined()
+  })
+
+  it('占位名（未知技能）不参与名称兜底', () => {
+    const resolve = () => '未知技能'
+    const boss = [bc('begincast', 50, 11111, 1000, 2000), bc('cast', 50, 11111, 3000)]
+    const evs = [dmg('未知技能', 22222, 3100)]
+    attachCastWindows(evs, boss, FS, resolve)
+    expect(evs[0].castStartTime).toBeUndefined()
+  })
+
+  it('名称兜底超出最大回溯窗口（>5s）→ 不命中', () => {
+    const resolve = (id: number) => (id === 11111 ? '延迟' : undefined)
+    const boss = [bc('begincast', 50, 11111, 1000, 2000), bc('cast', 50, 11111, 3000)]
+    const evs = [dmg('延迟', 22222, 3000 + 40000)] // cast 结束 3000ms，td 晚 40s，远超窗口
+    attachCastWindows(evs, boss, FS, resolve)
+    expect(evs[0].castStartTime).toBeUndefined()
+  })
+
+  it('同名单次咏唱 + 多个同名伤害 → 只有第一个兜底命中，配对不复用', () => {
+    const resolve = (id: number) => (id === 11111 ? '连击' : undefined)
+    const boss = [bc('begincast', 50, 11111, 1000, 2000), bc('cast', 50, 11111, 3000)]
+    // 两个伤害 id 都 ≠ 11111 但同名；只有一次咏唱窗口
+    const e1 = dmg('连击', 22222, 3100)
+    const e2 = dmg('连击', 22222, 3200)
+    attachCastWindows([e1, e2], boss, FS, resolve)
+    expect(e1.castStartTime).toBe(0)
+    expect(e1.castEndTime).toBe(2.0)
+    expect(e2.castStartTime).toBeUndefined() // 配对已被 e1 消费，不复用
+  })
+
+  it('同名两次咏唱 + 两个同名伤害 → 各自消费一对', () => {
+    const resolve = (id: number) => (id === 11111 ? '连击' : undefined)
+    const boss = [
+      bc('begincast', 50, 11111, 1000, 1000),
+      bc('cast', 50, 11111, 2000),
+      bc('begincast', 50, 11111, 3000, 1000),
+      bc('cast', 50, 11111, 4000),
+    ]
+    const e1 = dmg('连击', 22222, 2100) // 命中第一对 [1000,2000]
+    const e2 = dmg('连击', 22222, 4100) // 命中第二对 [3000,4000]
+    attachCastWindows([e1, e2], boss, FS, resolve)
+    expect(e1.castEndTime).toBe(1.0)
+    expect(e2.castStartTime).toBe(2.0)
+    expect(e2.castEndTime).toBe(3.0)
+  })
+
+  it('id 精确匹配优先于同名兜底', () => {
+    const resolve = (id: number) => (id === 11111 || id === 22222 ? '技' : undefined)
+    // 22222：与伤害 id 相同，结束 3000；11111：同名不同 id，结束 3500（更接近 td）
+    const boss = [
+      bc('begincast', 50, 22222, 1000, 2000),
+      bc('cast', 50, 22222, 3000),
+      bc('begincast', 50, 11111, 1500, 2000),
+      bc('cast', 50, 11111, 3500),
+    ]
+    const evs = [dmg('技', 22222, 3600)]
+    attachCastWindows(evs, boss, FS, resolve)
+    // id 命中 22222 那对 [1000,3000]，而非更近的同名 11111 [1500,3500]
+    expect(evs[0].castStartTime).toBe(0)
+    expect(evs[0].castEndTime).toBe(2.0)
+  })
+})

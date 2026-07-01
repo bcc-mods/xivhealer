@@ -22,6 +22,8 @@ interface UIState {
   showActualDamage: boolean
   /** 是否显示原始伤害 */
   showOriginalDamage: boolean
+  /** 表格视图是否显示「咏唱开始时间」列 */
+  showCastStartTime: boolean
   /**
    * 是否启用 HP 模拟（累积扣血 + 治疗补回）。
    * 关闭时三视图（PropertyPanel / 卡片 / 表格）回退到孤立 finalDamage vs maxHP 视角，
@@ -51,6 +53,8 @@ interface UIState {
   toggleShowActualDamage: () => void
   /** 切换显示原始伤害 */
   toggleShowOriginalDamage: () => void
+  /** 切换显示「咏唱开始时间」列 */
+  toggleShowCastStartTime: () => void
   /** 切换 HP 模拟显示 */
   toggleEnableHpSimulation: () => void
   /** 设置当前拖拽的 castEvent.id；停止拖拽传 null */
@@ -93,6 +97,7 @@ export const useUIStore = create<UIState>()(
       isDamageTrackCollapsed: false,
       showActualDamage: true,
       showOriginalDamage: false,
+      showCastStartTime: false,
       enableHpSimulation: true,
       draggingId: null,
       canvasTool: 'pan',
@@ -135,6 +140,11 @@ export const useUIStore = create<UIState>()(
       toggleShowOriginalDamage: () =>
         set(state => ({
           showOriginalDamage: !state.showOriginalDamage,
+        })),
+
+      toggleShowCastStartTime: () =>
+        set(state => ({
+          showCastStartTime: !state.showCastStartTime,
         })),
 
       toggleEnableHpSimulation: () =>

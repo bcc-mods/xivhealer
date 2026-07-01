@@ -423,6 +423,46 @@ describe('parseDamageEvents', () => {
     expect(result[0].damage).toBe(12000) // 魔法伤害取近战(SAM)最高值
   })
 
+  it('同一玩家窗口内被同名技能连打多下 → 伤害值按累计求和', () => {
+    const playerMap = new Map<number, V2Actor>([[3, { id: 3, name: 'DPS1', type: 'Samurai' }]])
+    const abilityMap = makeAbilityMap(999999, 'Test Attack', 1024)
+
+    const events = [
+      {
+        type: 'damage',
+        packetID: 1,
+        abilityGameID: 999999,
+        targetID: 3,
+        unmitigatedAmount: 6000,
+        absorbed: 0,
+        amount: 6000,
+        timestamp: fightStartTime + 5000,
+        sourceID: 999,
+      },
+      {
+        type: 'damage',
+        packetID: 2,
+        abilityGameID: 999999,
+        targetID: 3,
+        unmitigatedAmount: 7000,
+        absorbed: 0,
+        amount: 7000,
+        timestamp: fightStartTime + 5200, // 与上一击相隔 200ms，落在 0.9s 合并窗口内
+        sourceID: 999,
+      },
+    ]
+
+    const result = parseDamageEvents(
+      withCalculatedDamage(events),
+      fightStartTime,
+      playerMap,
+      abilityMap
+    )
+    expect(result).toHaveLength(1)
+    expect(result[0].playerDamageDetails).toHaveLength(2)
+    expect(result[0].damage).toBe(13000) // 6000 + 7000 累计，而非取单次最高 7000
+  })
+
   it('应该在只有坦克时使用所有玩家的平均伤害', () => {
     const playerMap = new Map<number, V2Actor>([
       [1, { id: 1, name: 'Tank1', type: 'Paladin' }],

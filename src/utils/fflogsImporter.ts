@@ -515,7 +515,13 @@ export function parseDamageEvents(
   applyActionTypeOverride(damageEvents)
   // type 最终稳定后：把"部分 AOE（结算）"事件时间后移，使其稳定排在同刻全员 AOE 之后
   shiftPartialFinalAoeTime(damageEvents)
-  if (bossCasts) attachCastWindows(damageEvents, bossCasts, fightStartTime)
+  if (bossCasts) {
+    // 名称解析器与伤害事件命名同源（getActionChinese → abilityMap），
+    // 供 castWindow 在「读条 id ≠ 伤害 id 但同名」时做名称兜底匹配
+    const resolveActionName = (id: number): string | undefined =>
+      getActionChinese(id) ?? abilityMap?.get(id)?.name
+    attachCastWindows(damageEvents, bossCasts, fightStartTime, resolveActionName)
+  }
 
   return damageEvents
 }
@@ -566,35 +572,48 @@ function applyActionTypeOverride(damageEvents: DamageEvent[]): void {
  * 物理伤害 → 法系+治疗受伤最高（物防低）
  * 魔法伤害 → 近战+远物受伤最高（魔防低）
  * 其他 → 非坦克最高值
+ *
+ * 先按玩家把「窗口内同名多次命中」的 unmitigatedDamage 求和，再在各玩家的合计里选代表值。
+ * 这样 AoE（每名玩家各挨一下）取单人受伤最高不变；同一玩家在窗口内被同名技能连打多下时，
+ * 其受伤按累计计入（而非只取最大的一下）。
  */
 function selectRepresentativeDamage(
   details: PlayerDamageDetail[],
   damageType: DamageType,
   tankJobs: Job[]
 ): number {
-  // 若目标组内最大 unmitigatedDamage 为 0（通常因为伤害被盾完全吸收，FFLogs 没有返回
+  // 按玩家聚合：同一玩家的多次命中求和，保留其职业用于后续按角色筛选
+  const perPlayer = new Map<number, { job: Job; total: number }>()
+  for (const d of details) {
+    const cur = perPlayer.get(d.playerId)
+    if (cur) cur.total += d.unmitigatedDamage
+    else perPlayer.set(d.playerId, { job: d.job, total: d.unmitigatedDamage })
+  }
+  const sums = [...perPlayer.values()]
+
+  // 若目标组内最大合计为 0（通常因为伤害被盾完全吸收，FFLogs 没有返回
   // unmitigatedAmount / multiplier），则 fallback 到更宽的候选集合，而不是直接返回 0。
   if (damageType === 'physical') {
-    const targets = details.filter(d => {
-      const role = getJobRole(d.job)
+    const targets = sums.filter(s => {
+      const role = getJobRole(s.job)
       return role === 'caster' || role === 'healer'
     })
-    const max = Math.max(0, ...targets.map(d => d.unmitigatedDamage))
+    const max = Math.max(0, ...targets.map(s => s.total))
     if (max > 0) return max
   } else if (damageType === 'magical') {
-    const targets = details.filter(d => {
-      const role = getJobRole(d.job)
+    const targets = sums.filter(s => {
+      const role = getJobRole(s.job)
       return role === 'melee' || role === 'ranged'
     })
-    const max = Math.max(0, ...targets.map(d => d.unmitigatedDamage))
+    const max = Math.max(0, ...targets.map(s => s.total))
     if (max > 0) return max
   }
 
-  // fallback: 非坦克最高值；若非坦克也全为 0，再退回全体
-  const nonTankDetails = details.filter(d => !tankJobs.includes(d.job))
-  const nonTankMax = Math.max(0, ...nonTankDetails.map(d => d.unmitigatedDamage))
+  // fallback: 非坦克最高合计；若非坦克也全为 0，再退回全体
+  const nonTankSums = sums.filter(s => !tankJobs.includes(s.job))
+  const nonTankMax = Math.max(0, ...nonTankSums.map(s => s.total))
   if (nonTankMax > 0) return nonTankMax
-  return Math.max(0, ...details.map(d => d.unmitigatedDamage))
+  return Math.max(0, ...sums.map(s => s.total))
 }
 
 function detectDamageType(

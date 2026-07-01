@@ -83,6 +83,8 @@ const DamageEventCard = memo(function DamageEventCard({
   const x = event.time * zoomLevel + dragOffsetX
   const y = yOffset + row * rowHeight + rowHeight / 2
   const geom = computeDamageCardGeometry(event, zoomLevel)
+  // 判定菱形只在有咏唱窗口的卡片上显示；无咏唱时左缘即判定时间，无需菱形
+  const hasCast = event.castStartTime != null && event.castEndTime != null
 
   const isDark = colors.cardBg !== '#ffffff'
   const damageTypeColorMap: Record<DamageType, string> = {
@@ -274,38 +276,40 @@ const DamageEventCard = memo(function DamageEventCard({
         visible={!!damageText}
       />
 
-      {/* 伤害判定菱形：局部 x=0（=判定时间），骑在卡片下沿 */}
-      <RegularPolygon
-        x={0}
-        y={15}
-        sides={4}
-        radius={6}
-        fill="#ef4444"
-        stroke={diamondDraggable ? '#3b82f6' : colors.cardBg}
-        strokeWidth={diamondDraggable ? 2 : 1}
-        draggable={diamondDraggable}
-        shadowEnabled={false}
-        perfectDrawEnabled={false}
-        onDragStart={e => {
-          e.cancelBubble = true
-        }}
-        onDragMove={e => {
-          e.cancelBubble = true
-          e.target.y(15) // 锁回卡片下沿局部坐标
-          const newTime = (x + e.target.x()) / zoomLevel
-          reportDamageDrag?.(event.id, newTime * zoomLevel)
-          e.target.getStage()?.batchDraw()
-        }}
-        onDragEnd={e => {
-          e.cancelBubble = true
-          const newTime = Math.max(
-            TIMELINE_START_TIME,
-            Math.round(((x + e.target.x()) / zoomLevel) * 10) / 10
-          )
-          onDiamondDragEnd?.(event.id, newTime)
-          e.target.position({ x: 0, y: 15 })
-        }}
-      />
+      {/* 伤害判定菱形：局部 x=0（=判定时间），骑在卡片下沿；仅有咏唱窗口时显示 */}
+      {hasCast && (
+        <RegularPolygon
+          x={0}
+          y={15}
+          sides={4}
+          radius={6}
+          fill="#ef4444"
+          stroke={diamondDraggable ? '#3b82f6' : colors.cardBg}
+          strokeWidth={diamondDraggable ? 2 : 1}
+          draggable={diamondDraggable}
+          shadowEnabled={false}
+          perfectDrawEnabled={false}
+          onDragStart={e => {
+            e.cancelBubble = true
+          }}
+          onDragMove={e => {
+            e.cancelBubble = true
+            e.target.y(15) // 锁回卡片下沿局部坐标
+            const newTime = (x + e.target.x()) / zoomLevel
+            reportDamageDrag?.(event.id, newTime * zoomLevel)
+            e.target.getStage()?.batchDraw()
+          }}
+          onDragEnd={e => {
+            e.cancelBubble = true
+            const newTime = Math.max(
+              TIMELINE_START_TIME,
+              Math.round(((x + e.target.x()) / zoomLevel) * 10) / 10
+            )
+            onDiamondDragEnd?.(event.id, newTime)
+            e.target.position({ x: 0, y: 15 })
+          }}
+        />
+      )}
     </Group>
   )
 })

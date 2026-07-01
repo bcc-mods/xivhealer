@@ -93,8 +93,34 @@ export default function AddEventDialog({ open, onClose, defaultTime = 0 }: AddEv
           </div>
 
           <div>
-            <label className="block text-sm font-medium mb-1">时间</label>
+            <label className="block text-sm font-medium mb-1">判定时间</label>
             <TimeInput value={time} onChange={setTime} min={-30} />
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium mb-1">咏唱开始时间(秒)</label>
+              <input
+                type="number"
+                value={castStartInput}
+                onChange={e => setCastStartInput(e.target.value)}
+                placeholder="可选"
+                className="w-full px-3 py-2 border border-border rounded-md bg-background text-foreground"
+                step="0.1"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">咏唱时长(秒)</label>
+              <input
+                type="number"
+                value={castDurationInput}
+                onChange={e => setCastDurationInput(e.target.value)}
+                placeholder="可选"
+                className="w-full px-3 py-2 border border-border rounded-md bg-background text-foreground"
+                min="0"
+                step="0.1"
+              />
+            </div>
           </div>
 
           <div>
@@ -136,31 +162,6 @@ export default function AddEventDialog({ open, onClose, defaultTime = 0 }: AddEv
                 <SelectItem value="darkness">特殊</SelectItem>
               </SelectContent>
             </Select>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium mb-1">读条开始时间(秒)</label>
-            <input
-              type="number"
-              value={castStartInput}
-              onChange={e => setCastStartInput(e.target.value)}
-              placeholder="可选，例如: -3"
-              className="w-full px-3 py-2 border border-border rounded-md bg-background text-foreground"
-              step="0.1"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium mb-1">读条时长(秒)</label>
-            <input
-              type="number"
-              value={castDurationInput}
-              onChange={e => setCastDurationInput(e.target.value)}
-              placeholder="可选，例如: 3"
-              className="w-full px-3 py-2 border border-border rounded-md bg-background text-foreground"
-              min="0"
-              step="0.1"
-            />
           </div>
 
           <div className="flex items-center gap-2 h-8">

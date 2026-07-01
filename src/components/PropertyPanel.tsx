@@ -31,6 +31,7 @@ import {
   DAMAGE_EVENT_TYPE_LABELS,
   type DamageType,
   type DamageEventType,
+  type DamageEvent,
 } from '@/types/timeline'
 import type { MitigationStatus } from '@/types/status'
 import type { HpSimulationSnapshot } from '@/utils/mitigationCalculator'
@@ -69,20 +70,40 @@ export default function PropertyPanel() {
   // 在 render 期把外部值同步回 draft（用 storedKey 三元组防止覆盖正在编辑的内容）。
   const [nameDraft, setNameDraft] = useState(event?.name ?? '')
   const [damageDraft, setDamageDraft] = useState(event ? String(event.damage) : '')
+  // 读条：开始为时间值（TimeInput），时长为浮点秒（普通文本框）。无读条时 castStartTime 缺失，
+  // 开始回退显示为判定时间，时长为空。两者由 commitCastWindow 按 both-or-neither 成对写入 / 清除。
+  const castDurationOf = (e: DamageEvent): string =>
+    e.castStartTime != null && e.castEndTime != null
+      ? String(Math.round((e.castEndTime - e.castStartTime) * 100) / 100)
+      : ''
+  const [castStartValue, setCastStartValue] = useState(event?.castStartTime ?? event?.time ?? 0)
+  const [castDurationDraft, setCastDurationDraft] = useState(event ? castDurationOf(event) : '')
   const [syncedKey, setSyncedKey] = useState({
     id: event?.id,
     name: event?.name,
     damage: event?.damage,
+    castStartTime: event?.castStartTime,
+    castEndTime: event?.castEndTime,
   })
   if (
     event &&
     (event.id !== syncedKey.id ||
       event.name !== syncedKey.name ||
-      event.damage !== syncedKey.damage)
+      event.damage !== syncedKey.damage ||
+      event.castStartTime !== syncedKey.castStartTime ||
+      event.castEndTime !== syncedKey.castEndTime)
   ) {
-    setSyncedKey({ id: event.id, name: event.name, damage: event.damage })
+    setSyncedKey({
+      id: event.id,
+      name: event.name,
+      damage: event.damage,
+      castStartTime: event.castStartTime,
+      castEndTime: event.castEndTime,
+    })
     setNameDraft(event.name)
     setDamageDraft(String(event.damage))
+    setCastStartValue(event.castStartTime ?? event.time)
+    setCastDurationDraft(castDurationOf(event))
   }
 
   // 只有在选中伤害事件时才显示面板（不响应技能选中）
@@ -91,6 +112,17 @@ export default function PropertyPanel() {
   }
 
   if (!event) return null
+
+  // 读条 both-or-neither 提交：开始 + 时长(>0) 都有效才成对写入，否则清除成对字段。
+  const commitCastWindow = (start: number, durationStr: string) => {
+    if (isReadOnly) return
+    const dur = parseFloat(durationStr)
+    if (Number.isFinite(start) && Number.isFinite(dur) && dur > 0) {
+      updateDamageEvent(event.id, { castStartTime: start, castEndTime: start + dur })
+    } else if (event.castStartTime != null || event.castEndTime != null) {
+      updateDamageEvent(event.id, { castStartTime: undefined, castEndTime: undefined })
+    }
+  }
 
   // 使用预先计算的结果（可能为空）
   const result = eventResults.get(event.id)
@@ -510,7 +542,7 @@ export default function PropertyPanel() {
 
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className="block text-xs text-muted-foreground mb-1">时间</label>
+            <label className="block text-xs text-muted-foreground mb-1">判定时间</label>
             <TimeInput
               value={event.time}
               onChange={v => updateDamageEvent(event.id, { time: v })}
@@ -534,6 +566,35 @@ export default function PropertyPanel() {
                   setDamageDraft(String(event.damage))
                 }
               }}
+              className="w-full px-2.5 py-1.5 border border-border rounded-md text-sm bg-background text-foreground disabled:bg-muted disabled:cursor-not-allowed"
+              disabled={isReadOnly}
+            />
+          </div>
+        </div>
+
+        {/* 读条窗口：开始（时间格式）+ 时长（浮点秒）；both-or-neither */}
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="block text-xs text-muted-foreground mb-1">咏唱开始</label>
+            <TimeInput
+              value={castStartValue}
+              onChange={v => {
+                setCastStartValue(v)
+                commitCastWindow(v, castDurationDraft)
+              }}
+              size="sm"
+              disabled={isReadOnly}
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-muted-foreground mb-1">咏唱时长</label>
+            <input
+              type="number"
+              step="0.1"
+              min="0"
+              value={castDurationDraft}
+              onChange={e => setCastDurationDraft(e.target.value)}
+              onBlur={() => commitCastWindow(castStartValue, castDurationDraft)}
               className="w-full px-2.5 py-1.5 border border-border rounded-md text-sm bg-background text-foreground disabled:bg-muted disabled:cursor-not-allowed"
               disabled={isReadOnly}
             />
@@ -611,54 +672,6 @@ export default function PropertyPanel() {
                 size="sm"
                 disabled={isReadOnly}
                 className="w-[calc(50%-6px)]"
-              />
-            </>
-          )}
-        </div>
-
-        {/* 读条窗口设置 */}
-        <div className="flex items-center gap-2 h-8">
-          <Switch
-            checked={event.castStartTime != null && event.castEndTime != null}
-            onCheckedChange={checked => {
-              if (checked) {
-                // 开启默认：零宽窗口，起止都取判定时间，用户再编辑时长
-                updateDamageEvent(event.id, { castStartTime: event.time, castEndTime: event.time })
-              } else {
-                updateDamageEvent(event.id, { castStartTime: undefined, castEndTime: undefined })
-              }
-            }}
-            disabled={isReadOnly}
-          />
-          <span className="text-xs text-muted-foreground shrink-0">读条</span>
-          {event.castStartTime != null && event.castEndTime != null && (
-            <>
-              <span className="text-xs text-muted-foreground shrink-0 ml-auto">开始</span>
-              <TimeInput
-                value={event.castStartTime}
-                onChange={v =>
-                  updateDamageEvent(event.id, {
-                    castStartTime: v,
-                    // 保持时长不变：结束随开始平移
-                    castEndTime: v + (event.castEndTime! - event.castStartTime!),
-                  })
-                }
-                size="sm"
-                disabled={isReadOnly}
-                className="w-[72px]"
-              />
-              <span className="text-xs text-muted-foreground shrink-0">时长</span>
-              <TimeInput
-                value={Math.round((event.castEndTime - event.castStartTime) * 100) / 100}
-                onChange={v =>
-                  updateDamageEvent(event.id, {
-                    castEndTime: event.castStartTime! + Math.max(0, v),
-                  })
-                }
-                min={0}
-                size="sm"
-                disabled={isReadOnly}
-                className="w-[72px]"
               />
             </>
           )}

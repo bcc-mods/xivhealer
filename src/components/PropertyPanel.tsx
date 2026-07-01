@@ -616,6 +616,54 @@ export default function PropertyPanel() {
           )}
         </div>
 
+        {/* 读条窗口设置 */}
+        <div className="flex items-center gap-2 h-8">
+          <Switch
+            checked={event.castStartTime != null && event.castEndTime != null}
+            onCheckedChange={checked => {
+              if (checked) {
+                // 开启默认：零宽窗口，起止都取判定时间，用户再编辑时长
+                updateDamageEvent(event.id, { castStartTime: event.time, castEndTime: event.time })
+              } else {
+                updateDamageEvent(event.id, { castStartTime: undefined, castEndTime: undefined })
+              }
+            }}
+            disabled={isReadOnly}
+          />
+          <span className="text-xs text-muted-foreground shrink-0">读条</span>
+          {event.castStartTime != null && event.castEndTime != null && (
+            <>
+              <span className="text-xs text-muted-foreground shrink-0 ml-auto">开始</span>
+              <TimeInput
+                value={event.castStartTime}
+                onChange={v =>
+                  updateDamageEvent(event.id, {
+                    castStartTime: v,
+                    // 保持时长不变：结束随开始平移
+                    castEndTime: v + (event.castEndTime! - event.castStartTime!),
+                  })
+                }
+                size="sm"
+                disabled={isReadOnly}
+                className="w-[72px]"
+              />
+              <span className="text-xs text-muted-foreground shrink-0">时长</span>
+              <TimeInput
+                value={Math.round((event.castEndTime - event.castStartTime) * 100) / 100}
+                onChange={v =>
+                  updateDamageEvent(event.id, {
+                    castEndTime: event.castStartTime! + Math.max(0, v),
+                  })
+                }
+                min={0}
+                size="sm"
+                disabled={isReadOnly}
+                className="w-[72px]"
+              />
+            </>
+          )}
+        </div>
+
         {/* 目标减是否生效 */}
         <div className="flex items-center gap-2 h-8">
           <Switch
